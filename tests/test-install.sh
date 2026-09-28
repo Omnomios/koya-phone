@@ -7,7 +7,7 @@ trap 'rm -rf "$test_dir"' 0
 export TEST_INSTALL_ROOT="$shell_root" TEST_INSTALL_DIR="$test_dir"
 mkdir "$test_dir/fixtures"
 sed '$d' "$shell_root/install.sh" |
-    sed "s|/etc/koya-shell/hyprland.conf|$test_dir/fixtures/hyprland.conf|g; s|/etc/conf.d/tinydm|$test_dir/fixtures/tinydm|g" >"$test_dir/library.sh"
+    sed "s|/etc/koya-shell/hyprland.conf|$test_dir/fixtures/hyprland.conf|g; s|/etc/conf.d/tinydm|$test_dir/fixtures/tinydm|g; s|/proc/|$test_dir/fixtures/proc/|g; s|/sys/fs/cgroup|$test_dir/fixtures/cgroup|g" >"$test_dir/library.sh"
 sh -n "$shell_root/install.sh"
 sh "$shell_root/install.sh" --help >/dev/null
 if sh "$shell_root/install.sh" --unknown >/dev/null 2>&1; then exit 1; fi
@@ -24,10 +24,11 @@ package_inputs
 grep -qx 'hyprland~0.51' "$work/packages"
 grep -qx soc-qcom-vulkan "$work/packages"
 grep -qx firefox "$work/packages"
+grep -qx alacritty "$work/packages"
 if grep -Eq '^(python3|weston[^ ]*|wayland-dev|helix-plugins)$' "$work/packages"; then exit 1; fi
 profile=generic; apps=0
 package_inputs
-if grep -Eq '^(soc-qcom-vulkan|device-oneplus-enchilada|firefox)$' "$work/packages"; then exit 1; fi
+if grep -Eq '^(soc-qcom-vulkan|device-oneplus-enchilada|firefox|alacritty)$' "$work/packages"; then exit 1; fi
 valid_repo Omnomios/koya-phone
 if valid_repo '../bad/repo'; then exit 1; fi
 if (safe_path '/home/user/path with spaces'); then exit 1; fi
@@ -69,6 +70,29 @@ grep -Fxq HandlePowerKey=ignore "$work/elogind.conf"
 grep -Fxq 'Exec=dbus-run-session /usr/local/bin/start-koya-hyprland' "$work/session.desktop"
 sh -n "$work/launcher"
 
+# Only the previous local graphical login is cleaned up. SSH, background
+# services and other users must never enter the cgroup cleanup list.
+loginctl() {
+    case "$1:$2" in
+        list-sessions:*) printf 'c1 10000 user seat0\nc2 10000 user seat0\nc3 10000 user -\nc4 20000 other seat0\n' ;;
+        show-session:c1) printf 'Type=wayland\nSeat=seat0\nLeader=101\n' ;;
+        show-session:c2) printf 'Type=tty\nSeat=seat0\nLeader=102\n' ;;
+        show-session:c3) printf 'Type=unspecified\nSeat=\nLeader=103\n' ;;
+        *) exit 1 ;;
+    esac
+}
+mkdir -p "$TEST_INSTALL_DIR/fixtures/proc/101" "$TEST_INSTALL_DIR/fixtures/cgroup/c1"
+printf '0::/c1\n' >"$TEST_INSTALL_DIR/fixtures/proc/101/cgroup"
+printf 'populated 1\n' >"$TEST_INSTALL_DIR/fixtures/cgroup/c1/cgroup.events"
+: >"$TEST_INSTALL_DIR/fixtures/cgroup/c1/cgroup.kill"
+capture_graphical_sessions
+[ "$(cat "$work/graphical-sessions")" = "$TEST_INSTALL_DIR/fixtures/cgroup/c1" ]
+as_root() { "$@"; }
+cleanup_graphical_sessions
+[ "$(cat "$TEST_INSTALL_DIR/fixtures/cgroup/c1/cgroup.kill")" = 1 ]
+printf '0::/\n' >"$TEST_INSTALL_DIR/fixtures/proc/101/cgroup"
+if (capture_graphical_sessions); then exit 1; fi
+
 # Exercise the real download/signature flow using fake artifacts. Failed key
 # fingerprints or detached signatures must abort before installation can occur.
 fetch() {
@@ -79,7 +103,19 @@ fetch() {
 }
 gpg() {
     case " $* " in
-        *' show-only '*) printf 'pub:::::::::\nfpr:::::::::%s:\n' "${TEST_KEY:-$KOYA_KEY}" ;;
+        *' show-only '*)
+            printf 'pub:::::::::\nfpr:::::::::%s:\n' "${TEST_KEY:-$KOYA_KEY}"
+            [ "${TEST_EXTRA_KEY:-0}" = 0 ] || printf 'pub:::::::::\nfpr:::::::::HISTORICAL_KEY:\n'
+            ;;
+        *' --export '*)
+            [ "${TEST_KEY:-$KOYA_KEY}" = "$KOYA_KEY" ]
+            printf 'pinned key only\n'
+            ;;
+        *' --import '*)
+            case "$*" in
+                *"$work/gnupg"*) [ "$(cat "$work/koya-key.gpg")" = 'pinned key only' ] ;;
+            esac
+            ;;
         *' --verify '*) [ "${TEST_BAD_SIGNATURE:-0}" = 0 ] ;;
         *) : ;;
     esac
@@ -92,10 +128,12 @@ get_koya
 [ "$koya_version" = 0.5.3-r888 ]
 [ "$(find "$work/downloads" -name '*.apk' | wc -l)" = 3 ]
 [ "$(wc -l <"$work/SHA256SUMS")" = 3 ]
+work=$TEST_INSTALL_DIR/download-key-bundle; mkdir "$work"
+(TEST_EXTRA_KEY=1; koya_version=0.5.3-r888; get_koya)
 work=$TEST_INSTALL_DIR/download-bad-key; mkdir "$work"
 if (TEST_KEY=WRONG; koya_version=0.5.3-r888; get_koya); then exit 1; fi
 work=$TEST_INSTALL_DIR/download-bad-signature; mkdir "$work"
 if (TEST_BAD_SIGNATURE=1; koya_version=0.5.3-r888; get_koya); then exit 1; fi
 CHECK
 sh "$test_dir/check.sh"
-printf 'PASS: offline installer manifests, config preservation, startup deduplication and signature failure handling\n'
+printf 'PASS: offline installer manifests, config preservation, startup deduplication, graphical cgroup cleanup, pinned key selection and signature failure handling\n'

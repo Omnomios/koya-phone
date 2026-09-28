@@ -1,6 +1,6 @@
 #!/bin/sh
 # Bootstrap a base postmarketOS install into the Koya phone shell.
-# curl -fsSL https://raw.githubusercontent.com/Omnomios/koya-phone/main/install.sh | sh
+# curl -fsSL https://raw.githubusercontent.com/Omnomios/koya-phone/master/install.sh | sh
 set -eu
 
 # Default publication source; --repo can override it for forks.
@@ -13,14 +13,14 @@ usage() {
     cat <<'HELP'
 Usage: sh install.sh [options]
   --repo OWNER/REPO       GitHub source (or set KOYA_SHELL_REPO)
-  --ref REF              Branch, tag or commit; default main
+  --ref REF              Branch, tag or commit; default master
   --source-dir DIRECTORY Use local source instead of downloading GitHub
   --user USER            Non-root graphical login; normally detected
   --prefix DIRECTORY     Deployment; default ~/.local/share/koya-shell
   --profile PROFILE      auto (default), oneplus-enchilada, or generic
   --koya-version VERSION Official matching APK release, e.g. 0.5.3-r888;
                          default latest from Koya's installation page
-  --no-apps              Skip Firefox and extra fonts
+  --no-apps              Skip Firefox, Alacritty and extra fonts
   --no-start             Install/select the session, leave tinydm stopped
   --help                Show this help
 System changes use sudo internally (doas if sudo is absent), or run as root.
@@ -158,12 +158,17 @@ package_inputs() {
 }
 verify_koya_key() {
     mkdir -m 0700 "$work/gnupg"
+    mkdir -m 0700 "$work/key-bundle"
     fetch "$download_base/koya-packages.pub" "$work/koya-packages.pub"
     fingerprints=$(gpg --homedir "$work/gnupg" --batch --with-colons --import-options show-only \
         --import "$work/koya-packages.pub" 2>/dev/null |
         awk -F: '$1=="pub" {primary=1} $1=="fpr" && primary {print $10; primary=0}')
-    [ "$fingerprints" = "$KOYA_KEY" ] || die 'Koya signing key fingerprint does not match the pinned key.'
-    gpg --homedir "$work/gnupg" --batch --import "$work/koya-packages.pub"
+    printf '%s\n' "$fingerprints" | grep -Fxq "$KOYA_KEY" || die 'Koya signing key fingerprint does not match the pinned key.'
+    # The published bundle includes historical keys. Only the pinned primary key
+    # and its subkeys may enter the keyring used to verify package signatures.
+    gpg --homedir "$work/key-bundle" --batch --import "$work/koya-packages.pub"
+    gpg --homedir "$work/key-bundle" --batch --export "$KOYA_KEY" >"$work/koya-key.gpg"
+    gpg --homedir "$work/gnupg" --batch --import "$work/koya-key.gpg"
 }
 get_koya() {
     case "$download_base" in https://*) ;; *) die 'KOYA_DOWNLOAD_BASE must use HTTPS.' ;; esac
@@ -215,7 +220,7 @@ prepare_deployment() {
     release=$prefix/releases/$(date +%Y%m%d-%H%M%S)-$$
     as_login mkdir "$release"
     tar -cf "$work/deployment.tar" -C "$source_dir" apps assets native applications install/packages \
-        scripts/run-hyprland-shell.sh scripts/run-wifi.sh start-hyprland.sh run.sh \
+        scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/fix-battery-gauge.sh start-hyprland.sh run.sh \
         meson.build meson_options.txt hyprland.conf.in session.conf README.md COPYING
     chmod 0644 "$work/deployment.tar"
     as_login tar -xf "$work/deployment.tar" -C "$release"
@@ -303,10 +308,44 @@ configure_system() {
     as_root udevadm trigger --action=change --subsystem-match=input
     as_root udevadm settle
 }
+capture_graphical_sessions() {
+    : >"$work/graphical-sessions"
+    loginctl list-sessions --no-legend >"$work/login-sessions"
+    while read -r session_id session_uid rest; do
+        [ "$session_uid" = "$login_uid" ] || continue
+        case "$session_id" in ''|*[!a-zA-Z0-9]*) continue ;; esac
+        session_info=$(loginctl show-session "$session_id" -p Type -p Seat -p Leader)
+        session_type=$(printf '%s\n' "$session_info" | sed -n 's/^Type=//p')
+        session_seat=$(printf '%s\n' "$session_info" | sed -n 's/^Seat=//p')
+        session_leader=$(printf '%s\n' "$session_info" | sed -n 's/^Leader=//p')
+        case "$session_type:$session_seat" in wayland:?*|x11:?*) ;; *) continue ;; esac
+        case "$session_leader" in ''|*[!0-9]*) die 'Invalid graphical session leader.' ;; esac
+        session_cgroup=$(awk -F: '$1=="0" && $2=="" {print $3}' "/proc/$session_leader/cgroup")
+        # elogind on this platform moves the login out of OpenRC's service
+        # cgroup. Stopping tinydm can then unregister it while leaving children.
+        # Remember only the matching elogind cgroup, never a user/root cgroup.
+        if [ "$session_cgroup" = "/$session_id" ]; then
+            [ -e "/sys/fs/cgroup$session_cgroup/cgroup.kill" ] || die 'Graphical session cleanup requires kernel cgroup.kill support.'
+            printf '%s\n' "/sys/fs/cgroup$session_cgroup" >>"$work/graphical-sessions"
+        else
+            die "Unsupported graphical session cgroup: $session_cgroup"
+        fi
+    done <"$work/login-sessions"
+}
+cleanup_graphical_sessions() {
+    while IFS= read -r session_cgroup; do
+        [ -d "$session_cgroup" ] || continue
+        grep -q '^populated 1$' "$session_cgroup/cgroup.events" || continue
+        [ -e "$session_cgroup/cgroup.kill" ] || die "Cannot clean up old graphical session: $session_cgroup"
+        say "Cleaning up the previous graphical session: $session_cgroup"
+        as_root sh -c 'printf 1 > "$1/cgroup.kill"' sh "$session_cgroup"
+    done <"$work/graphical-sessions"
+}
 select_session() {
     say 'Selecting the Koya session...'
     # Only stop display managers at the end, after all downloads/build/config
     # verification succeed. Never kill processes by name or spawn a retry loop.
+    capture_graphical_sessions
     for manager in tinydm lightdm gdm sddm greetd xdm; do
         if [ -x "/etc/init.d/$manager" ]; then
             if as_root rc-service "$manager" status >/dev/null 2>&1; then as_root rc-service "$manager" stop; fi
@@ -317,6 +356,7 @@ select_session() {
             fi
         fi
     done
+    cleanup_graphical_sessions
     runtime=/tmp/$login_uid-runtime-dir
     for held_lock in koya-compositor.lock koya-shell.lock koya-hyprland-bridge.lock; do
         if [ -e "$runtime/$held_lock" ]; then
@@ -378,7 +418,7 @@ wait_session() {
     die 'The graphical session did not become ready; see the session logs above.'
 }
 main() {
-    repo=${KOYA_SHELL_REPO:-$DEFAULT_REPO}; ref=main; source_dir=; source_url=
+    repo=${KOYA_SHELL_REPO:-$DEFAULT_REPO}; ref=master; source_dir=; source_url=
     login_user=; prefix=; profile=auto; koya_version=latest; apps=1; start=1
     download_base=${KOYA_DOWNLOAD_BASE:-https://www.koya-ui.com/downloads}
     privilege=; work=; release=; selected=0

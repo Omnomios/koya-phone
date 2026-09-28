@@ -9,7 +9,7 @@ doas when sudo is absent, and also works directly from a root shell.
 Once published on GitHub, run from a terminal as the intended graphical user:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Omnomios/koya-phone/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Omnomios/koya-phone/master/install.sh | sh
 ```
 
 The base must already have working device/kernel integration, internet access,
@@ -27,7 +27,7 @@ Useful variants:
 sh ./install.sh --source-dir . --user user
 
 # Pin both source and engine for a reproducible deployment.
-curl -fsSL https://raw.githubusercontent.com/Omnomios/koya-phone/main/install.sh |
+curl -fsSL https://raw.githubusercontent.com/Omnomios/koya-phone/master/install.sh |
     sh -s -- --ref COMMIT_OR_TAG --koya-version 0.5.3-r888
 
 # Select the session but leave tinydm stopped for manual activation.
@@ -53,14 +53,120 @@ APK's native signature check. The release's `install-record.txt` records source,
 release, architecture, fingerprint and artifact SHA256 sums. Signature verification
 uses a private temporary keyring and never imports into the user's keyring.
 
-Installer validation is offline (`sh tests/test-install.sh`) plus a native
-Hyprland-only build. The installer has not been executed against a fresh image;
-device wake, networking, audio and touch still need a clean-base trial.
+Installer validation includes offline checks (`sh tests/test-install.sh`) and a
+fresh OnePlus 6 / postmarketOS v25.12 trial on 2026-09-28. The trial used the
+download-and-pipe command, with fixes applied to the downloaded installer before
+execution. Koya build 888 signatures, the native build, Hyprland configuration,
+session readiness, Wi-Fi status, audio sinks, keyboard availability, brightness
+discovery and haptic udev tagging passed. A reinstall cleaned up the previous
+graphical cgroup and left one compositor/coordinator/keyboard; the app drawer and
+power menu both became ready with an empty `LastError`. Physical touch, wake,
+sound output and suspend/resume still require testing on the device.
+
+The trial found three installer faults: URLs/default refs used the nonexistent
+`main` branch instead of `master`; the official multi-key bundle was rejected
+despite containing the pinned signing key; and stopping tinydm left the previous
+Weston session alive in its elogind cgroup. The installer now imports only the
+pinned key into its verification keyring and captures the old local graphical
+session's cgroup before stopping display managers, cleaning up its remaining
+processes with the kernel's `cgroup.kill`. SSH and background sessions are
+excluded. Unsupported graphical cgroup layouts fail before stopping the session.
+
+The device's battery gauge returned invalid kernel values (`capacity=13296`,
+`voltage_now=65535000`, `temp=-2731`); the shell correctly reports an unknown
+percentage. Comparing two OnePlus 6 phones with the same `6.16.7-sdm845` kernel
+and `ti,bq27411` device-tree compatibility identified different fuel-gauge
+DeviceType responses: `0x0421` on the working phone, `0x1141` on this phone.
+The latter gave sensible voltage, temperature and charge when queried directly
+using the bq27541 register layout; its exact chip model remains unconfirmed.
+
+With user approval, the second phone's installed DTB at
+`/boot/dtbs/qcom/sdm845-oneplus-enchilada.dtb` was patched at
+`/soc@0/geniqup@ac0000/i2c@a88000/bq27441-battery@55`: only the `compatible`
+property changed from `ti,bq27411` to `ti,bq27541` (two bytes). The original DTB
+and boot image were backed up locally and in the phone's root-owned
+`/home/user/koya-battery-backup-20260928-232432/`. `mkinitfs` regenerated and
+flashed `boot_a`; after reboot the kernel exposed `bq27541-0` with 100% charge,
+4.393 V and 22.9°C. Koya reported `BatteryPercent=100`, its core components were
+ready and `LastError` was empty. This is a per-device compatibility workaround,
+not an installer default: the `0x0421` phone keeps its original configuration,
+and kernel package upgrades can replace the patched DTB.
+
+`CanSuspend=challenge` was initially observed with several SSH sessions open;
+after reboot it reported `yes`. The base SSH sleep inhibitor still applies while
+connected, so physical suspend testing must close those connections first.
 
 Update the package manifests and this document whenever a feature adds a
 dependency or needs a system configuration change. Do not use `/etc/apk/world`
 as the installer input: this development phone also has unrelated tools and
 packages retained from earlier experiments.
+
+## OnePlus 6 battery-gauge workaround
+
+[`scripts/fix-battery-gauge.sh`](../scripts/fix-battery-gauge.sh) applies the
+per-device DTB workaround described above. It runs independently of the shell
+installer and defaults to inspection. On the phone, install its dependencies:
+
+```sh
+sudo apk add dtc i2c-tools
+```
+
+After the utility is published, download this single file and inspect the gauge:
+
+```sh
+curl -fSL https://raw.githubusercontent.com/Omnomios/koya-phone/master/scripts/fix-battery-gauge.sh -o /tmp/fix-battery-gauge.sh
+sudo sh /tmp/fix-battery-gauge.sh --check
+```
+
+Apply when it reports that a patch is needed:
+
+```sh
+sudo sh /tmp/fix-battery-gauge.sh --apply
+sudo reboot
+```
+
+The utility supports postmarketOS on the OnePlus 6 (`enchilada`). It queries the
+gauge's DeviceType twice without unbinding the driver or writing gauge settings.
+`0x0421` keeps `ti,bq27411`; `0x0541` and the observed `0x1141` can use
+`ti,bq27541` after voltage, temperature and charge readings pass sanity checks.
+Other IDs are rejected. The `0x1141` chip's exact model remains unconfirmed;
+the workaround selects its tested register map. An already patched DTB is
+left alone, including when `--apply` is used.
+
+Before changing anything, `--apply` saves the source DTB, deployed DTB, boot image
+and a record with SHA256 hashes under
+`/var/lib/koya-shell/battery-gauge-backups/<timestamp>-<suffix>/`. It verifies that
+only the two compatibility bytes change, then runs `mkinitfs`, which regenerates
+and deploys the boot image using the phone's existing boot-deploy configuration.
+**This writes the boot partition.** The utility never reboots automatically.
+After reboot, run `--check` again and confirm normal readings in the shell.
+
+If deployment fails, it attempts to restore the source DTB and reports the backup
+path. Deployment may have partially written boot files or the partition; resolve
+the error and successfully run `sudo mkinitfs` before rebooting. To undo a
+successful patch on the same kernel, replace the source DTB with the backup's
+`source.dtb`, then rebuild and reboot:
+
+```sh
+sudo cp /var/lib/koya-shell/battery-gauge-backups/BACKUP/source.dtb /boot/dtbs/qcom/sdm845-oneplus-enchilada.dtb
+sudo mkinitfs
+sudo reboot
+```
+
+Replace `BACKUP` with the directory printed by the utility. Kernel upgrades can
+overwrite this change; rerun the check after an upgrade rather than restoring a
+DTB from an older kernel. The shell deployment also includes the utility at
+`~/.local/share/koya-shell/current/scripts/fix-battery-gauge.sh`.
+
+The utility's offline tests cover gauge selection, unchanged reruns, byte-level
+DTB validation, backups and deployment/restore failures
+(`sh tests/test-battery-gauge.sh`; DTB checks require `dtc`). On the patched
+second phone, both `--check` and `--apply` reported `0x1141` and sensible readings,
+and all three boot-file hashes stayed unchanged.
+
+Gauge access uses the combined transfers documented by
+[i2c-tools](https://kernel.googlesource.com/pub/scm/utils/i2c-tools/i2c-tools/+/master/tools/i2ctransfer.8).
+The utility is POSIX shell and needs no Python runtime.
 
 ## Observed platform
 
@@ -103,7 +209,7 @@ direct requirements; APK should resolve their library dependencies.
 | [koya.list](../install/packages/koya.list) | Engine and the two native modules imported by the shell |
 | [oneplus-enchilada.list](../install/packages/oneplus-enchilada.list) | Device profile and working Vulkan driver |
 | [build.list](../install/packages/build.list) | Building the current repository on the target |
-| [apps.list](../install/packages/apps.list) | Firefox and system fonts |
+| [apps.list](../install/packages/apps.list) | Firefox, Alacritty terminal and system fonts |
 | [test.list](../install/packages/test.list) | Optional automated development checks |
 
 The installer consumes these files, ignoring comments and blank lines, and checks

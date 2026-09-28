@@ -49,7 +49,7 @@ and internet access must already be configured. Run as the intended graphical
 user with `curl` and access to `sudo` or `doas`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Omnomios/koya-phone/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Omnomios/koya-phone/master/install.sh | sh
 ```
 
 The POSIX shell installer requests privileges when needed, downloads and verifies
@@ -66,12 +66,16 @@ Current targets:
 | UI engine | Koya build 888 or newer, with matching D-Bus and process plugins |
 | Reference device | OnePlus 6 (`enchilada`), using 2× display scale |
 
-The installer is experimental and still needs validation on clean images.
+The installer is experimental and has been tested on a fresh OnePlus 6 image.
 Other devices need testing; the generic profile keeps their existing hardware
 integration.
 
 For version pins, forks, root-shell installation and `--no-start`, see the
 [installation guide](docs/installation.md).
+
+Some replacement OnePlus 6 batteries need a different fuel-gauge register map.
+If battery readings are invalid, use the optional
+[battery-gauge utility](docs/installation.md#oneplus-6-battery-gauge-workaround).
 
 ## Using the shell
 

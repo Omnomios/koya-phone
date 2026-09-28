@@ -1,5 +1,6 @@
 # Optional apps matching the current development environment.
 firefox
+alacritty
 font-droid
 font-droid-nonlatin
 font-twemoji

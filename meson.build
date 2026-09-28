@@ -17,6 +17,7 @@ if get_option('integration_tests')
   test('hyprland-integration', python, args: files('tests/test-hyprland.py'),
     depends: [coordinator_test, hyprland_display_test, hyprland_display], timeout: 35)
   test('installer-offline', find_program('sh'), args: files('tests/test-install.sh'), timeout: 10)
+  test('battery-gauge-utility', find_program('sh'), args: files('tests/test-battery-gauge.sh'), timeout: 20)
   test('status-integration', python, args: files('tests/test-status.py'), depends: coordinator_test, timeout: 20)
   test('keyboard-integration', python, args: files('tests/test-keyboard.py'), depends: coordinator_test, timeout: 20)
 endif
