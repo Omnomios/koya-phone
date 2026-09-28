@@ -1,0 +1,6 @@
+# OnePlus 6 only. A base install should already contain its device package.
+# Do not apply this profile to another phone.
+device-oneplus-enchilada
+soc-qcom-vulkan
+soc-qcom-pulseaudio
+soc-qcom-pulseaudio-openrc

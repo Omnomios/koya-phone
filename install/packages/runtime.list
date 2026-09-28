@@ -1,0 +1,37 @@
+# Alpine/postmarketOS packages for the Hyprland shell.
+# One package per line; blank lines and comments are ignored by consumers.
+# APK resolves transitive dependencies. Koya and hardware have separate lists.
+hyprland
+swayidle
+tinydm
+tinydm-openrc
+dbus
+dbus-openrc
+elogind
+elogind-openrc
+polkit-elogind
+polkit-openrc
+eudev
+eudev-openrc
+glib
+libevdev
+setpriv
+flock
+squeekboard
+feedbackd
+feedbackd-udev
+feedbackd-device-themes
+gdk-pixbuf
+librsvg
+hicolor-icon-theme
+libnotify
+pulseaudio
+pulseaudio-utils
+networkmanager
+networkmanager-openrc
+networkmanager-wifi
+networkmanager-wwan
+wpa_supplicant
+modemmanager
+modemmanager-openrc
+modemmanager-udev

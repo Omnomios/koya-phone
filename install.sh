@@ -1,0 +1,428 @@
+#!/bin/sh
+# Bootstrap a base postmarketOS install into the Koya phone shell.
+# curl -fsSL https://raw.githubusercontent.com/Omnomios/koya-phone/main/install.sh | sh
+set -eu
+
+# Default publication source; --repo can override it for forks.
+DEFAULT_REPO=Omnomios/koya-phone
+KOYA_KEY=06089A97B6D66C69BFD021F0DF7B60698EF57FF3
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'koya-install: %s\n' "$*" >&2; exit 1; }
+usage() {
+    cat <<'HELP'
+Usage: sh install.sh [options]
+  --repo OWNER/REPO       GitHub source (or set KOYA_SHELL_REPO)
+  --ref REF              Branch, tag or commit; default main
+  --source-dir DIRECTORY Use local source instead of downloading GitHub
+  --user USER            Non-root graphical login; normally detected
+  --prefix DIRECTORY     Deployment; default ~/.local/share/koya-shell
+  --profile PROFILE      auto (default), oneplus-enchilada, or generic
+  --koya-version VERSION Official matching APK release, e.g. 0.5.3-r888;
+                         default latest from Koya's installation page
+  --no-apps              Skip Firefox and extra fonts
+  --no-start             Install/select the session, leave tinydm stopped
+  --help                Show this help
+System changes use sudo internally (doas if sudo is absent), or run as root.
+No installer test suspends, shuts down or changes network connections.
+HELP
+}
+need_value() { [ "$#" -ge 2 ] && [ -n "$2" ] || die "$1 requires a value"; }
+safe_path() {
+    case "$1" in /*) ;; *) die "Expected an absolute path: $1" ;; esac
+    case "$1" in /|*[!a-zA-Z0-9_./-]*) die "Use a path with letters, digits, _, ., / and -: $1" ;; esac
+}
+valid_repo() {
+    case "$1" in ''|*[!a-zA-Z0-9_./-]*|/*|*/|*../*) return 1 ;; esac
+    [ "$(printf '%s\n' "$1" | awk -F/ '{print NF}')" = 2 ]
+}
+fetch() {
+    case "$1" in https://*) ;; *) die "Download URL must use HTTPS: $1" ;; esac
+    curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+        --retry 2 --connect-timeout 20 --max-time 180 --output "$2" "$1"
+}
+as_root() {
+    if [ "$(id -u)" = 0 ]; then "$@";
+    else "$privilege" "$@" </dev/tty; fi
+}
+as_login() {
+    if [ "$(id -u)" = "$login_uid" ]; then "$@";
+    else as_root setpriv --reuid "$login_uid" --regid "$login_gid" --init-groups \
+        env "HOME=$login_home" "USER=$login_user" "LOGNAME=$login_user" "$@"; fi
+}
+cleanup() {
+    cleanup_code=$?
+    trap - 0 HUP INT TERM
+    if [ "$cleanup_code" != 0 ]; then
+        say 'Installation stopped. The installer does not retry or start a second session.' >&2
+        [ "${selected:-0}" = 0 ] || say "Session files were selected; inspect $login_home/.local/state/tinydm.log before starting tinydm." >&2
+        [ -z "${release:-}" ] || say "Prepared deployment: $release" >&2
+    fi
+    [ -z "${work:-}" ] || rm -rf "$work"
+    exit "$cleanup_code"
+}
+detect_user() {
+    if [ -z "$login_user" ]; then
+        if [ "$(id -u)" != 0 ]; then login_user=$(id -un);
+        elif [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then login_user=$SUDO_USER;
+        else
+            detected_uid=$(sed -n "s/^[[:space:]]*AUTOLOGIN_UID=[\"']*\\([0-9][0-9]*\\).*/\\1/p" /etc/conf.d/tinydm 2>/dev/null || :)
+            if [ -n "$detected_uid" ]; then
+                login_user=$(getent passwd "$detected_uid" | cut -d: -f1) || :
+            fi
+            if [ -z "$login_user" ]; then
+                candidates=$(awk -F: '$3>=1000 && $3<65534 && $6 ~ /^\/home\// && $7 !~ /(nologin|false)$/ {print $1}' /etc/passwd)
+                if [ "$(printf '%s\n' "$candidates" | awk 'NF {n++} END {print n+0}')" = 1 ]; then login_user=$candidates; fi
+            fi
+        fi
+    fi
+    if [ -z "$login_user" ]; then
+        [ -r /dev/tty ] || die 'Specify the graphical login with --user USER.'
+        printf 'Graphical login user: ' >/dev/tty
+        IFS= read -r login_user </dev/tty
+    fi
+    case "$login_user" in ''|*[!a-zA-Z0-9_-]*) die 'Invalid login user.' ;; esac
+    record=$(getent passwd "$login_user") || die "Unknown user: $login_user"
+    login_uid=$(printf '%s\n' "$record" | cut -d: -f3)
+    login_gid=$(printf '%s\n' "$record" | cut -d: -f4)
+    login_home=$(printf '%s\n' "$record" | cut -d: -f6)
+    [ "$login_uid" != 0 ] || die 'The graphical session must not run as root.'
+    [ "$(id -u)" = 0 ] || [ "$(id -u)" = "$login_uid" ] || die 'Run as the graphical user or root.'
+    safe_path "$login_home"
+    [ -d "$login_home" ] || die "Missing login home: $login_home"
+    prefix=${prefix:-$login_home/.local/share/koya-shell}
+    safe_path "$prefix"
+    case "$prefix" in *'/../'*|*'/..'|*'/./'*|*'/.'|*'//'*) die 'Use a normalized deployment path.' ;; esac
+    case "$prefix" in "$login_home"/*) ;; *) die '--prefix must be inside the graphical user home.' ;; esac
+}
+platform() {
+    [ -r /etc/os-release ] || die 'Missing /etc/os-release.'
+    grep -Eq "^ID=[\"']?postmarketos[\"']?$" /etc/os-release || die 'This installer targets postmarketOS.'
+    for tool in apk curl tar awk sed getent; do command -v "$tool" >/dev/null || die "Missing bootstrap tool: $tool"; done
+    arch=$(apk --print-arch)
+    case "$arch" in aarch64|x86_64) ;; *) die "Unsupported architecture: $arch" ;; esac
+    apk_major=$(apk --version | sed -n 's/^apk-tools \([0-9][0-9]*\)\..*/\1/p')
+    case "$apk_major" in ''|*[!0-9]*) die 'Cannot determine apk-tools version.' ;; esac
+    [ "$apk_major" -ge 3 ] || die 'Koya APK downloads require apk-tools 3 or newer (postmarketOS v25.12 or newer).'
+    case "$profile" in
+        auto)
+            if apk info -e device-oneplus-enchilada >/dev/null 2>&1; then profile=oneplus-enchilada;
+            else profile=generic; fi ;;
+        oneplus-enchilada)
+            apk info -e device-oneplus-enchilada >/dev/null 2>&1 || die 'The OnePlus profile requires a OnePlus 6 base image.' ;;
+        generic) ;;
+        *) die "Unknown device profile: $profile" ;;
+    esac
+    if [ "$(id -u)" != 0 ]; then
+        [ -r /dev/tty ] || die 'Run in a terminal so sudo can request authentication.'
+        if command -v sudo >/dev/null; then privilege=sudo;
+        elif command -v doas >/dev/null; then privilege=doas;
+        else die 'Install/configure sudo or doas, or run this script from a root shell.'; fi
+    fi
+}
+get_source() {
+    if [ -n "$source_dir" ]; then
+        source_dir=$(CDPATH= cd -- "$source_dir" && pwd -P)
+    else
+        valid_repo "$repo" || die 'Supply --repo OWNER/REPO (or set DEFAULT_REPO before publishing).'
+        case "$ref" in ''|*[!a-zA-Z0-9_./-]*|/*|*..*) die 'Invalid GitHub ref.' ;; esac
+        source_url=https://codeload.github.com/$repo/tar.gz/$ref
+        say "Downloading $repo ($ref)..."
+        fetch "$source_url" "$work/source.tar.gz"
+        tar -tzf "$work/source.tar.gz" >"$work/archive-files"
+        if grep -Eq '(^/|(^|/)\.\.(/|$))' "$work/archive-files"; then die 'Unsafe source archive paths.'; fi
+        mkdir "$work/source"
+        tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
+        source_dir=$work/source
+    fi
+    for required in meson.build meson_options.txt hyprland.conf.in session.conf run.sh \
+        start-hyprland.sh scripts/run-hyprland-shell.sh scripts/run-wifi.sh \
+        install/packages/runtime.list install/packages/build.list install/packages/koya.list; do
+        [ -f "$source_dir/$required" ] || die "Source is missing $required"
+    done
+}
+manifest() {
+    awk '{sub(/#.*/, ""); gsub(/^[ \t]+|[ \t]+$/, ""); if (length($0)) print}' "$1"
+}
+package_inputs() {
+    manifest "$source_dir/install/packages/runtime.list" >"$work/packages"
+    manifest "$source_dir/install/packages/build.list" >>"$work/packages"
+    [ "$profile" = generic ] || manifest "$source_dir/install/packages/$profile.list" >>"$work/packages"
+    [ "$apps" = 0 ] || manifest "$source_dir/install/packages/apps.list" >>"$work/packages"
+    printf 'curl\ngnupg\n' >>"$work/packages"
+    # The committed template is tested with 0.51.x. Do not change repo branches
+    # or install a newer compositor whose configuration syntax differs.
+    awk '$0=="hyprland" {$0="hyprland~0.51"} !seen[$0]++' "$work/packages" >"$work/packages.unique"
+    mv "$work/packages.unique" "$work/packages"
+    if grep -Eq '[^a-zA-Z0-9_+.,~=-]|^-' "$work/packages"; then die 'Invalid APK package manifest.'; fi
+}
+verify_koya_key() {
+    mkdir -m 0700 "$work/gnupg"
+    fetch "$download_base/koya-packages.pub" "$work/koya-packages.pub"
+    fingerprints=$(gpg --homedir "$work/gnupg" --batch --with-colons --import-options show-only \
+        --import "$work/koya-packages.pub" 2>/dev/null |
+        awk -F: '$1=="pub" {primary=1} $1=="fpr" && primary {print $10; primary=0}')
+    [ "$fingerprints" = "$KOYA_KEY" ] || die 'Koya signing key fingerprint does not match the pinned key.'
+    gpg --homedir "$work/gnupg" --batch --import "$work/koya-packages.pub"
+}
+get_koya() {
+    case "$download_base" in https://*) ;; *) die 'KOYA_DOWNLOAD_BASE must use HTTPS.' ;; esac
+    if [ "$koya_version" = latest ]; then
+        fetch https://developer.koya-ui.com/install/index.html "$work/koya-install.html"
+        filename=$(grep -o "koya-[0-9][0-9.]*-r[0-9][0-9]*\.$arch\.apk" "$work/koya-install.html" | head -n 1)
+        [ -n "$filename" ] || die 'Cannot resolve latest Koya APK; specify --koya-version.'
+        koya_version=${filename#koya-}; koya_version=${koya_version%.$arch.apk}
+    fi
+    printf '%s\n' "$koya_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$' || die 'Use an APK version such as 0.5.3-r888.'
+    [ "${koya_version##*-r}" -ge 888 ] || die 'This shell requires Koya build 888 or newer (text-input-v3 and independent D-Bus handles).'
+    verify_koya_key
+    mkdir "$work/downloads"
+    manifest "$source_dir/install/packages/koya.list" >"$work/koya-packages"
+    [ "$(cat "$work/koya-packages")" = "$(printf 'koya\nhelix-plugin-dbus\nhelix-plugin-process')" ] || die 'Unexpected Koya package set.'
+    while IFS= read -r package; do
+        artifact=$package-$koya_version.$arch.apk
+        say "Downloading and verifying $artifact..."
+        fetch "$download_base/$artifact" "$work/downloads/$artifact"
+        fetch "$download_base/$artifact.sig" "$work/downloads/$artifact.sig"
+        gpg --homedir "$work/gnupg" --batch --verify "$work/downloads/$artifact.sig" "$work/downloads/$artifact" || die "Bad signature: $artifact"
+    done <"$work/koya-packages"
+    (cd "$work/downloads" && sha256sum ./*.apk) >"$work/SHA256SUMS"
+}
+install_packages() {
+    say 'Refreshing existing repositories and checking package availability...'
+    as_root apk update
+    set --
+    while IFS= read -r package; do set -- "$@" "$package"; done <"$work/packages"
+    as_root apk add --simulate "$@"
+    # Signature tooling is needed before trusting the standalone Koya APKs.
+    as_root apk add curl gnupg
+    get_koya
+    set -- "$@" "$work"/downloads/*.apk
+    as_root apk add --simulate --allow-untrusted "$@"
+    as_root apk add --allow-untrusted "$@"
+    apk info -v -e hyprland | grep -q '^hyprland-0\.51\.' || die 'Installed Hyprland is not 0.51.x.'
+    for needed in /usr/bin/koya /usr/lib/libhx-dbus.so /usr/lib/libhx-process.so \
+        /usr/share/koya/assets/fonts/SourceSans3-Regular.ttf; do
+        [ -r "$needed" ] || die "Koya installation is missing $needed"
+    done
+    koya --version
+}
+prepare_deployment() {
+    say "Building the Hyprland shell as $login_user..."
+    as_login mkdir -p "$prefix/releases"
+    as_login chmod 0755 "$prefix" "$prefix/releases"
+    [ ! -e "$prefix/current" ] || [ -L "$prefix/current" ] || die "Refusing to replace non-symlink $prefix/current"
+    release=$prefix/releases/$(date +%Y%m%d-%H%M%S)-$$
+    as_login mkdir "$release"
+    tar -cf "$work/deployment.tar" -C "$source_dir" apps assets native applications install/packages \
+        scripts/run-hyprland-shell.sh scripts/run-wifi.sh start-hyprland.sh run.sh \
+        meson.build meson_options.txt hyprland.conf.in session.conf README.md COPYING
+    chmod 0644 "$work/deployment.tar"
+    as_login tar -xf "$work/deployment.tar" -C "$release"
+    # Preserve user policy on reruns, while new settings retain native defaults.
+    if [ -f "$prefix/current/session.conf" ]; then
+        as_login cp "$prefix/current/session.conf" "$release/session.conf"
+    fi
+    as_login meson setup "$release/build" "$release" -Dintegration_tests=false --buildtype=release
+    as_login meson compile -C "$release/build" koya-session koya-hyprland-display koya-launch-app
+    for binary in koya-session koya-hyprland-display koya-launch-app; do
+        [ -x "$release/build/$binary" ] || die "Missing built binary: $binary"
+    done
+    as_login chmod +x "$release/start-hyprland.sh" "$release/run.sh" \
+        "$release/scripts/run-hyprland-shell.sh" "$release/scripts/run-wifi.sh"
+    awk -v path="$prefix/current/scripts/run-wifi.sh" '/^Exec=/ {$0="Exec=" path} {print}' \
+        "$release/applications/koya-wifi.desktop" >"$work/wifi.desktop"
+    as_login cp "$work/wifi.desktop" "$release/applications/koya-wifi.desktop"
+    {
+        printf 'source=%s\nref=%s\nkoya=%s\ndownload_base=%s\narch=%s\nprofile=%s\nkey=%s\n' \
+            "${source_url:-local:$source_dir}" "$ref" "$koya_version" "$download_base" "$arch" "$profile" "$KOYA_KEY"
+        [ ! -f "$work/source.tar.gz" ] || sha256sum "$work/source.tar.gz" | awk '{print "source_sha256=" $1}'
+        cat "$work/SHA256SUMS"
+    } >"$work/install-record.txt"
+    as_login cp "$work/install-record.txt" "$release/install-record.txt"
+}
+prepare_session_files() {
+    awk -v command="$prefix/current/scripts/run-hyprland-shell.sh" \
+        '{sub(/@SHELL_COMMAND@/, command); print}' "$release/hyprland.conf.in" >"$work/hyprland.conf"
+    # Preserve compositor tuning on reruns, replacing only our startup command.
+    if [ -f /etc/koya-shell/hyprland.conf ]; then
+        awk -v command="$prefix/current/scripts/run-hyprland-shell.sh" \
+            '/^[[:space:]]*exec-once[[:space:]]*=.*run-hyprland-shell\.sh/ {if (!found) print "exec-once = exec " command; found=1; next} {print} END {if (!found) print "exec-once = exec " command}' \
+            /etc/koya-shell/hyprland.conf >"$work/hyprland.conf"
+    fi
+    chmod 0644 "$work/hyprland.conf"
+    # Verify syntax only: no compositor, DRM session or graphical test is started.
+    as_login Hyprland --verify-config --config "$work/hyprland.conf" >"$work/verify-config.log" 2>&1 || {
+        cat "$work/verify-config.log" >&2; die 'Hyprland rejected the prepared configuration.';
+    }
+    grep -q 'config ok' "$work/verify-config.log" || { cat "$work/verify-config.log" >&2; die 'Hyprland config verification did not report success.'; }
+    printf '#!/bin/sh\nexec "%s/current/start-hyprland.sh" "$@"\n' "$prefix" >"$work/launcher"
+    cat >"$work/session.desktop" <<'DESKTOP'
+[Desktop Entry]
+Name=Koya
+Comment=Koya phone shell on Hyprland
+Exec=dbus-run-session /usr/local/bin/start-koya-hyprland
+Type=Application
+DesktopNames=Hyprland;
+DESKTOP
+    cat >"$work/elogind.conf" <<'ELOGIND'
+[Login]
+HandlePowerKey=ignore
+HandlePowerKeyLongPress=ignore
+ELOGIND
+    if [ -r /etc/conf.d/tinydm ]; then cat /etc/conf.d/tinydm >"$work/tinydm.original";
+    else : >"$work/tinydm.original"; fi
+    awk '!/^[[:space:]]*(AUTOLOGIN_UID|rc_cgroup_cleanup)[[:space:]]*=/' "$work/tinydm.original" >"$work/tinydm"
+    printf '\nrc_cgroup_cleanup="yes"\nAUTOLOGIN_UID=%s\n' "$login_uid" >>"$work/tinydm"
+}
+ensure_service() {
+    [ -x "/etc/init.d/$1" ] || die "Missing OpenRC service: $1"
+    as_root rc-update add "$1" "${2:-default}"
+    if ! as_root rc-service "$1" status >/dev/null 2>&1; then as_root rc-service "$1" start; fi
+}
+configure_system() {
+    for group in input video render audio netdev plugdev; do
+        if getent group "$group" >/dev/null && ! id -Gn "$login_user" | tr ' ' '\n' | grep -qx "$group"; then
+            as_root addgroup "$login_user" "$group"
+        fi
+    done
+    ensure_service cgroups boot
+    ensure_service dbus
+    ensure_service elogind
+    ensure_service polkit
+    # Leave running networking and hardware services alone. Starting an absent
+    # NM service supplies the Wi-Fi UI; no connection is activated by this script.
+    ensure_service networkmanager
+    # The base image owns modem/audio integration and udev. Do not start a
+    # second PulseAudio instance, independent keyboard, feedbackd or swayidle.
+    as_root install -d -m 0755 /etc/koya-shell /etc/elogind/logind.conf.d \
+        /usr/local/bin /usr/share/wayland-sessions /var/lib/tinydm
+    as_root install -m 0644 "$work/elogind.conf" /etc/elogind/logind.conf.d/90-koya-shell.conf
+    as_root rc-service elogind reload
+    as_root udevadm control --reload-rules
+    as_root udevadm trigger --action=change --subsystem-match=input
+    as_root udevadm settle
+}
+select_session() {
+    say 'Selecting the Koya session...'
+    # Only stop display managers at the end, after all downloads/build/config
+    # verification succeed. Never kill processes by name or spawn a retry loop.
+    for manager in tinydm lightdm gdm sddm greetd xdm; do
+        if [ -x "/etc/init.d/$manager" ]; then
+            if as_root rc-service "$manager" status >/dev/null 2>&1; then as_root rc-service "$manager" stop; fi
+            if [ "$manager" != tinydm ]; then
+                for level in default boot; do
+                    if [ -e "/etc/runlevels/$level/$manager" ]; then as_root rc-update del "$manager" "$level"; fi
+                done
+            fi
+        fi
+    done
+    runtime=/tmp/$login_uid-runtime-dir
+    for held_lock in koya-compositor.lock koya-shell.lock koya-hyprland-bridge.lock; do
+        if [ -e "$runtime/$held_lock" ]; then
+            as_root flock -w 8 "$runtime/$held_lock" true || die "The old session still holds $held_lock; leaving tinydm stopped."
+        fi
+    done
+    as_login ln -s "$release" "$prefix/current.new.$$"
+    as_login mv -fT "$prefix/current.new.$$" "$prefix/current"
+    as_root install -m 0644 "$work/hyprland.conf" /etc/koya-shell/hyprland.conf
+    as_root install -m 0755 "$work/launcher" /usr/local/bin/start-koya-hyprland
+    as_root install -m 0644 "$work/session.desktop" /usr/share/wayland-sessions/koya-hyprland.desktop
+    as_root install -m 0644 "$work/tinydm" /etc/conf.d/tinydm
+    as_root ln -s /usr/share/wayland-sessions/koya-hyprland.desktop /var/lib/tinydm/default-session.new.$$
+    as_root mv -fT /var/lib/tinydm/default-session.new.$$ /var/lib/tinydm/default-session.desktop
+    as_root rc-update add tinydm default
+    selected=1
+    [ "$start" = 0 ] || as_root rc-service tinydm start
+}
+wait_session() {
+    say 'Waiting for the normal graphical session (read-only startup check)...'
+    readiness_deadline=$(( $(date +%s) + 40 ))
+    while [ "$(date +%s)" -lt "$readiness_deadline" ]; do
+        adapter_pid=; coordinator_pid=; session_bus=
+        if [ -r "$runtime/koya-hyprland.state" ]; then
+            while IFS='=' read -r state_key state_value; do
+                case "$state_key" in
+                    bridge_pid) adapter_pid=$state_value ;;
+                    coordinator_pid) coordinator_pid=$state_value ;;
+                    dbus_address) session_bus=$state_value ;;
+                esac
+            done <"$runtime/koya-hyprland.state"
+            case "$adapter_pid:$coordinator_pid" in *[!0-9:]*|:*|*:) sleep 1; continue ;; esac
+            if [ "$(readlink "/proc/$adapter_pid/exe" 2>/dev/null || :)" = "$release/build/koya-hyprland-display" ] &&
+               [ "$(readlink "/proc/$coordinator_pid/exe" 2>/dev/null || :)" = "$release/build/koya-session" ] &&
+               [ -n "$session_bus" ]; then
+                if snapshot=$(as_login timeout 3 env "DBUS_SESSION_BUS_ADDRESS=$session_bus" "XDG_RUNTIME_DIR=$runtime" \
+                    gdbus call --session --dest org.koya.Shell1 --object-path /org/koya/Shell1 \
+                    --method org.koya.Shell1.GetState 2>/dev/null); then
+                    ready=1
+                    for field in "'Active': <true>" "'wallpaperStatus': <'ready'>" "'top-barStatus': <'ready'>" \
+                        "'navigationStatus': <'ready'>" "'KeyboardAvailable': <true>" "'DesktopAvailable': <true>" "'LastError': <''>"; do
+                        printf '%s\n' "$snapshot" | grep -Fq "$field" || ready=0
+                    done
+                    if [ "$ready" = 1 ]; then
+                        say "Koya ready: adapter=$adapter_pid coordinator=$coordinator_pid"
+                        return
+                    fi
+                fi
+            fi
+        fi
+        sleep 1
+    done
+    for log in tinydm.log koya-shell/session.log koya-shell/top-bar.log koya-shell/hyprland-display.log; do
+        if [ -r "$login_home/.local/state/$log" ]; then
+            say "--- $log ---" >&2
+            tail -n 15 "$login_home/.local/state/$log" >&2
+        fi
+    done
+    die 'The graphical session did not become ready; see the session logs above.'
+}
+main() {
+    repo=${KOYA_SHELL_REPO:-$DEFAULT_REPO}; ref=main; source_dir=; source_url=
+    login_user=; prefix=; profile=auto; koya_version=latest; apps=1; start=1
+    download_base=${KOYA_DOWNLOAD_BASE:-https://www.koya-ui.com/downloads}
+    privilege=; work=; release=; selected=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --repo) need_value "$@"; repo=$2; shift ;;
+            --ref) need_value "$@"; ref=$2; shift ;;
+            --source-dir) need_value "$@"; source_dir=$2; shift ;;
+            --user) need_value "$@"; login_user=$2; shift ;;
+            --prefix) need_value "$@"; prefix=$2; shift ;;
+            --profile) need_value "$@"; profile=$2; shift ;;
+            --koya-version) need_value "$@"; koya_version=$2; shift ;;
+            --no-apps) apps=0 ;;
+            --no-start) start=0 ;;
+            --help|-h) usage; return ;;
+            *) die "Unknown option: $1" ;;
+        esac
+        shift
+    done
+    platform
+    detect_user
+    umask 022
+    work=$(mktemp -d /tmp/koya-install.XXXXXX)
+    chmod 0755 "$work" # Build as the login user even when invoked from root.
+    trap cleanup 0
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    get_source
+    package_inputs
+    say "Installing for $login_user (UID $login_uid), $arch, profile $profile."
+    [ "$profile" != generic ] || say 'Generic profile: retaining the base image GPU/audio/device configuration.'
+    install_packages
+    prepare_deployment
+    prepare_session_files
+    configure_system
+    select_session
+    [ "$start" = 0 ] || wait_session
+    say "Installed: $prefix/current"
+    say "Release and verified download record: $release/install-record.txt"
+    say "Settings: $prefix/current/session.conf and /etc/koya-shell/hyprland.conf"
+    if [ "$start" = 0 ]; then say 'tinydm is stopped. Start it from root with: rc-service tinydm start';
+    else say "tinydm started. Session log: $login_home/.local/state/tinydm.log"; fi
+    say 'Test touch, wake/unlock, audio, keyboard, haptics and Wi-Fi on the device.'
+}
+
+main "$@"

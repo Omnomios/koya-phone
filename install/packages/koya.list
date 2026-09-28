@@ -1,0 +1,5 @@
+# Install matching engine/plugin downloads, rather than from distro repositories.
+# See https://developer.koya-ui.com/install/index.html for available artifacts.
+koya
+helix-plugin-dbus
+helix-plugin-process

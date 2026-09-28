@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Wi-Fi
+Exec=/home/user/koya-shell/scripts/run-wifi.sh
+TryExec=koya
+Icon=network-wireless
+StartupWMClass=org.koya.Wifi
+Terminal=false
+Categories=Settings;Network;

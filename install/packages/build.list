@@ -1,0 +1,8 @@
+# Build the Hyprland deployment with integration_tests disabled.
+build-base
+meson
+ninja
+pkgconf
+glib-dev
+libevdev-dev
+eudev-dev
