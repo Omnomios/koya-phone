@@ -24,7 +24,8 @@ vibration feedback without sound.
 It installs and enables `iio-sensor-proxy` for automatic rotation and refreshes
 sensor device rules so the service detects existing devices on the first install.
 It also starts a graphical polkit agent and configures askpass dialogs for SSH
-and `sudo -A` inside the Koya session.
+and, when real sudo is installed, `sudo -A` inside the Koya session. The
+postmarketOS `doas-sudo-shim` is retained if present.
 
 ## Install
 
@@ -62,11 +63,23 @@ To install from a downloaded checkout, run `sh ./install.sh --source-dir .`.
 ## Settings and updates
 
 The default installation directory is `~/.local/share/koya-shell/`. Its `current`
-symlink selects the active release. To update, rerun the installation command.
-This installs the latest available Koya and matching plugins, unless a version is
-specified. Existing `session.conf` and Hyprland settings are preserved. Older
+symlink selects the active release. Open **Update Koya** from the app launcher
+to install the latest version from the configured repository and ref. The app
+uses `pkexec` for a graphical polkit password prompt and queues the installer with
+`atd`, outside the graphical session that tinydm stops. Save open work first;
+the current graphical session closes near the end of installation and a new
+one starts. Reopen Update Koya to view the result and recent output. A failed
+update leaves its log at `/var/log/koya-shell/update.log`.
+
+You can also rerun the installation command from a terminal outside the
+graphical session, such as SSH. Both paths install the latest available Koya
+and matching plugins, unless a version is specified. Existing `session.conf`
+and Hyprland settings are preserved. Older
 shell releases remain in the `releases` directory; each release's
 `install-record.txt` records the repository and installed Koya package versions.
+For an initial install from a local checkout, pass `--repo` and `--ref` if
+Update Koya should track a fork or branch other than the default repository's
+`master` branch.
 
 Edit `~/.local/share/koya-shell/current/session.conf` to change screen timeouts,
 auto-rotation, volume, brightness and vibration. Display settings are in

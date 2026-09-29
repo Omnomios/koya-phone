@@ -131,7 +131,9 @@ get_source() {
     else
         valid_repo "$repo" || die 'Supply --repo OWNER/REPO (or set DEFAULT_REPO before publishing).'
         case "$ref" in ''|*[!a-zA-Z0-9_./-]*|/*|*..*) die 'Invalid GitHub ref.' ;; esac
-        source_url=https://codeload.github.com/$repo/tar.gz/$ref
+        # Moving refs can leave a cached archive behind a freshly fetched
+        # bootstrap script. A unique URL makes each install resolve the ref.
+        source_url=https://codeload.github.com/$repo/tar.gz/$ref?koya_cache_bust=$(date +%s)-$$
         say "Downloading $repo ($ref)..."
         fetch "$source_url" "$work/source.tar.gz"
         tar -tzf "$work/source.tar.gz" >"$work/archive-files"
@@ -141,7 +143,8 @@ get_source() {
         source_dir=$work/source
     fi
     for required in meson.build meson_options.txt hyprland.conf.in session.conf run.sh \
-        start-hyprland.sh scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/run-settings.sh \
+        start-hyprland.sh scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/run-settings.sh scripts/run-update.sh \
+        install/update-schedule.sh install/update-worker.sh applications/koya-update.desktop \
         install/packages/runtime.list install/packages/build.list install/packages/koya.list; do
         [ -f "$source_dir/$required" ] || die "Source is missing $required"
     done
@@ -231,7 +234,8 @@ prepare_deployment() {
     release=$prefix/releases/$(date +%Y%m%d-%H%M%S)-$$
     as_login mkdir "$release"
     tar -cf "$work/deployment.tar" -C "$source_dir" apps assets native applications install/packages \
-        scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/run-settings.sh install/fix-battery-gauge.sh start-hyprland.sh run.sh \
+        scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/run-settings.sh scripts/run-update.sh \
+        install/fix-battery-gauge.sh install/update-schedule.sh install/update-worker.sh start-hyprland.sh run.sh \
         meson.build meson_options.txt hyprland.conf.in session.conf README.md COPYING
     chmod 0644 "$work/deployment.tar"
     as_login tar -xf "$work/deployment.tar" -C "$release"
@@ -245,13 +249,16 @@ prepare_deployment() {
         [ -x "$release/build/$binary" ] || die "Missing built binary: $binary"
     done
     as_login chmod +x "$release/start-hyprland.sh" "$release/run.sh" \
-        "$release/scripts/run-hyprland-shell.sh" "$release/scripts/run-wifi.sh" "$release/scripts/run-settings.sh"
+        "$release/scripts/run-hyprland-shell.sh" "$release/scripts/run-wifi.sh" "$release/scripts/run-settings.sh" "$release/scripts/run-update.sh"
     awk -v path="$prefix/current/scripts/run-wifi.sh" '/^Exec=/ {$0="Exec=" path} {print}' \
         "$release/applications/koya-wifi.desktop" >"$work/wifi.desktop"
     as_login cp "$work/wifi.desktop" "$release/applications/koya-wifi.desktop"
     awk -v path="$prefix/current/scripts/run-settings.sh" '/^Exec=/ {$0="Exec=" path} {print}' \
         "$release/applications/koya-settings.desktop" >"$work/settings.desktop"
     as_login cp "$work/settings.desktop" "$release/applications/koya-settings.desktop"
+    awk -v path="$prefix/current/scripts/run-update.sh" '/^Exec=/ {$0="Exec=" path} {print}' \
+        "$release/applications/koya-update.desktop" >"$work/update.desktop"
+    as_login cp "$work/update.desktop" "$release/applications/koya-update.desktop"
     {
         printf 'source=%s\nref=%s\nkoya=%s\nrepository=%s\narch=%s\nprofile=%s\nkey=%s\n' \
             "${source_url:-local:$source_dir}" "$ref" "$koya_version" "$KOYA_REPOSITORY" "$arch" "$profile" "$KOYA_KEY"
@@ -304,6 +311,10 @@ ELOGIND
     else : >"$work/tinydm.original"; fi
     awk '!/^[[:space:]]*(AUTOLOGIN_UID|rc_cgroup_cleanup)[[:space:]]*=/' "$work/tinydm.original" >"$work/tinydm"
     printf '\nrc_cgroup_cleanup="yes"\nAUTOLOGIN_UID=%s\n' "$login_uid" >>"$work/tinydm"
+    valid_repo "$repo" || die 'Self-update requires a repository in OWNER/REPO form.'
+    case "$ref" in ''|*[!a-zA-Z0-9_./-]*|/*|*..*) die 'Invalid update ref.' ;; esac
+    printf 'user=%s\nprefix=%s\nrepo=%s\nref=%s\nprofile=%s\napps=%s\n' \
+        "$login_user" "$prefix" "$repo" "$ref" "$profile" "$apps" >"$work/update.conf"
 }
 ensure_service() {
     [ -x "/etc/init.d/$1" ] || die "Missing OpenRC service: $1"
@@ -320,13 +331,17 @@ configure_system() {
     ensure_service dbus
     ensure_service elogind
     ensure_service polkit
+    ensure_service atd
     # Leave running networking and hardware services alone. Starting an absent
     # NM service supplies the Wi-Fi UI; no connection is activated by this script.
     ensure_service networkmanager
     # The base image owns modem/audio integration and udev. Do not start a
     # second PulseAudio instance, independent keyboard, feedbackd or swayidle.
     as_root install -d -m 0755 /etc/koya-shell /etc/elogind/logind.conf.d \
-        /usr/local/bin /usr/share/wayland-sessions /var/lib/tinydm
+        /usr/local/bin /usr/local/libexec /usr/share/wayland-sessions /var/lib/tinydm
+    as_root install -m 0644 "$work/update.conf" /etc/koya-shell/update.conf
+    as_root install -m 0755 "$release/install/update-schedule.sh" /usr/local/libexec/koya-update-schedule
+    as_root install -m 0755 "$release/install/update-worker.sh" /usr/local/libexec/koya-update-worker
     as_root install -m 0644 "$work/elogind.conf" /etc/elogind/logind.conf.d/90-koya-shell.conf
     as_root rc-service elogind reload
     as_root udevadm control --reload-rules

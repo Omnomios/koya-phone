@@ -14,7 +14,8 @@ polkit-openrc
 polkit-gnome
 openssh-client-default
 openssh-askpass
-sudo
+at
+at-openrc
 eudev
 eudev-openrc
 iio-sensor-proxy

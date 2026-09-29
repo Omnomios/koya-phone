@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Update Koya
+Exec=/home/user/koya-shell/scripts/run-update.sh
+TryExec=koya
+Icon=koya-update
+StartupWMClass=org.koya.Update
+Terminal=false
+Categories=Settings;System;

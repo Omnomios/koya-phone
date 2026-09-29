@@ -2,7 +2,7 @@
 
 A touch interface for Linux phones running [postmarketOS](https://postmarketos.org),
 with an app launcher, desktops, notifications, Wi-Fi settings and an on-screen
-keyboard, plus a Settings app for wallpapers and shell preferences. Built with
+keyboard, plus Settings and Update Koya apps. Built with
 [Koya](https://www.koya-ui.com) and [Hyprland](https://hypr.land).
 
 Koya Phone is experimental and designed for the OnePlus 6. It provides hardware
@@ -66,6 +66,8 @@ to switch or close applications. The keyboard button shows or hides the keyboard
 
 Open **Settings** from **Apps** to choose a wallpaper and adjust screen timeouts,
 volume controls and vibration. Changes apply immediately and are saved.
+Open **Update Koya** from **Apps** to install a new release through a graphical
+administrator prompt; the installer continues after the shell closes.
 
 Tap the top bar or swipe down for notifications, brightness and Wi-Fi settings.
 Press the power button briefly to switch the screen off or wake it; hold it to

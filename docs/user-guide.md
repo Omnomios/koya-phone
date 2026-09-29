@@ -9,6 +9,7 @@
 | Switch or close an app | Tap **Desktops** |
 | Show or hide the keyboard | Tap the keyboard button |
 | Change wallpaper or shell preferences | Open **Settings** from **Apps** |
+| Update the shell | Open **Update Koya** from **Apps** |
 | Open notifications and brightness controls | Tap the top bar or swipe down from it |
 | Switch the screen off or wake it | Press the power button briefly |
 | Open Power off, Restart and Lock | Hold the power button |
@@ -30,9 +31,20 @@ Apps that request administrator access through polkit open a password dialog in
 the graphical session, including Power off and Restart when authorization is
 required. SSH from a terminal or app launched by Koya uses a
 graphical askpass dialog when it needs a password or key passphrase. For a
-graphical `sudo` prompt, use `sudo -A`; ordinary `sudo` in a terminal still
-reads from that terminal. Incoming SSH logins authenticate on the remote client,
-so they do not open a prompt on the phone.
+graphical `sudo` prompt on systems with real sudo, use `sudo -A`. The default
+postmarketOS `doas-sudo-shim` does not support that option; Koya's updater uses
+polkit instead. Ordinary terminal privilege prompts still read from the
+terminal. Incoming SSH logins authenticate on the remote client, so they do
+not open a prompt on the phone.
+
+## Updating Koya
+
+Open **Update Koya** from the app launcher, save your work, then tap **Install
+update**. Enter your administrator password in the polkit dialog. The app
+shows download and build progress from the installer log. Koya closes when the
+new session is selected, then starts again. Reopen the app to see the final
+result. If the graphical session does not return, connect over SSH and inspect
+`/var/log/koya-shell/update.log`.
 
 ## Wi-Fi
 

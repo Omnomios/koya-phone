@@ -41,7 +41,10 @@ grep -qx iio-sensor-proxy-openrc "$work/packages"
 grep -qx polkit-gnome "$work/packages"
 grep -qx openssh-askpass "$work/packages"
 grep -qx openssh-client-default "$work/packages"
-grep -qx sudo "$work/packages"
+if grep -qx sudo "$work/packages"; then exit 1; fi
+grep -qx at "$work/packages"
+grep -qx at-openrc "$work/packages"
+grep -q 'ensure_service atd' "$TEST_INSTALL_ROOT/install.sh"
 grep -q "ensure_service iio-sensor-proxy" "$TEST_INSTALL_ROOT/install.sh"
 grep -q "subsystem-match=misc --sysname-match='fastrpc-\*'" "$TEST_INSTALL_ROOT/install.sh"
 if grep -Eq '^(python3|weston[^ ]*|wayland-dev|helix-plugins)$' "$work/packages"; then exit 1; fi
@@ -56,6 +59,9 @@ if (fetch http://example.invalid/file "$work/no-file"); then exit 1; fi
 release=$TEST_INSTALL_DIR/release
 prefix=$TEST_INSTALL_DIR/deployment
 login_uid=10000
+login_user=user
+repo=Omnomios/koya-phone
+ref=master
 mkdir "$release"
 cp "$TEST_INSTALL_ROOT/hyprland.conf.in" "$release/hyprland.conf.in"
 cat >"$TEST_INSTALL_DIR/fixtures/hyprland.conf" <<'CONFIG'
@@ -79,6 +85,7 @@ as_login() {
     esac
 }
 prepare_session_files
+[ "$(cat "$work/update.conf")" = "$(printf 'user=user\nprefix=%s\nrepo=Omnomios/koya-phone\nref=master\nprofile=generic\napps=0' "$prefix")" ]
 [ "$(grep -c '^exec-once' "$work/hyprland.conf")" = 2 ]
 grep -Fxq "exec-once = exec $prefix/current/scripts/run-hyprland-shell.sh" "$work/hyprland.conf"
 grep -Fxq 'exec-once = /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1' "$work/hyprland.conf"
@@ -255,7 +262,12 @@ prepare_deployment
 [ -f "$release/apps/wallpaper.js" ]
 [ -f "$release/native/session.cpp" ]
 [ -f "$release/install/fix-battery-gauge.sh" ]
+[ -f "$release/install/update-schedule.sh" ]
+[ -f "$release/install/update-worker.sh" ]
 [ -f "$release/scripts/run-hyprland-shell.sh" ]
+[ -f "$release/scripts/run-update.sh" ]
+[ -f "$release/apps/update.js" ]
+grep -Fxq "Exec=$prefix/current/scripts/run-update.sh" "$release/applications/koya-update.desktop"
 grep -Fxq "repository=$KOYA_REPOSITORY" "$release/install-record.txt"
 grep -Fxq 'koya-9.8.7-r9999' "$release/install-record.txt"
 grep -Fxq 'helix-plugin-dbus-9.8.7-r9999' "$release/install-record.txt"
