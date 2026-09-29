@@ -56,7 +56,7 @@ export default async () => {
             const center = await capture(controller.centerWindow, 'center');
             const first = controller.model.items.find(item => item.actions.some(action => action.key === 'default'));
             const frame = await UI.getElementFrame(controller.centerWindow, await UI.getElementById(controller.centerWindow, 'notification-' + first.id));
-            if (frame.min.x !== 20 || frame.max.x !== 520 || frame.size.y < 204) throw new Error('Notification card padding/size incorrect: ' + JSON.stringify(frame));
+            if (frame.min.x !== 20 || frame.max.x !== 520 || frame.size.y < 112) throw new Error('Notification card padding/size incorrect: ' + JSON.stringify(frame));
             const items = controller.model.items.map(({ timer, ...item }) => item);
             controller.model.invoke(first.id, 'default');
             Process.writeFileText('/tmp/koya-notifications.json', JSON.stringify({ banner, center, frame, items, unread: controller.model.unread }));

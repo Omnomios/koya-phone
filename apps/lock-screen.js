@@ -5,6 +5,8 @@ import { connect, call } from './session.js';
 import { clips } from './motion.js';
 import { lockMotion } from './lock-motion.js';
 import { swipeGesture } from './swipe.js';
+import { text as textElement } from './touch-ui.js';
+import { CREAM, ORANGE, MUTED, WALLPAPER, WALLPAPER_SIZE, TYPE, SPACE } from './theme.js';
 
 // Visual prototype, not a security boundary. Display power belongs to the coordinator.
 export default async () => {
@@ -26,28 +28,22 @@ export default async () => {
   });
   await UI.attachRoot(win, root);
   const sheet = await UI.createElement(win, {
-    renderable: { type: 'sprite', texture: '/rom/assets/earthy-green-wallpaper.png', frame: 0,
-      frames: [{ size, origin: { x: 0, y: 0 }, aabb: { min: { x: 0, y: 0 }, max: { x: 864, y: 1821 } }, colour: [0.45, 0.50, 0.43, 1] }] },
+    renderable: { type: 'sprite', texture: WALLPAPER, frame: 0,
+      frames: [{ size, origin: { x: 0, y: 0 }, aabb: { min: { x: 0, y: 0 }, max: WALLPAPER_SIZE }, colour: [0.45, 0.50, 0.43, 1] }] },
     item: { size }, contentAlign: 'fill'
   });
   await UI.attach(win, root, sheet);
   await UI.setElementId(win, sheet, 'lock-sheet');
+  // Clock in the upper third, where the eye lands; the unlock hint sits at
+  // the bottom edge, where the swipe starts.
   const content = await UI.createElement(win, {
-    layout: { type: 'column', justifyContent: 'center', gap: 12 }, item: { size }
+    layout: { type: 'column', padding: { l: 0, r: 0, t: Math.round(info.height * 0.16), b: Math.max(40, Math.round(info.height * 0.05)) } }, item: { size }
   });
   // Wallpaper and text are siblings: only the text follows the swipe.
   await UI.attach(win, root, content);
   await UI.setInheritAnimation(win, content, true);
   await UI.setElementId(win, content, 'lock-content');
-  const text = async (value, fontSize, height, colour = [244/255, 233/255, 216/255, 1]) => {
-    const element = await UI.createElement(win, {
-      renderable: { type: 'text', string: value, size: fontSize, font: '/rom/fonts/SourceSans3-Regular.ttf', colour },
-      item: { size: { x: info.width, y: height } }, contentAlign: { x: 'center', y: 'center' }
-    });
-    await UI.attach(win, content, element);
-    await UI.setTextVerticalAlign(win, element, 'center');
-    return element;
-  };
+  const text = (value, fontSize, height, colour = CREAM) => textElement(win, content, value, fontSize, info.width, height, colour);
   const format = () => {
     const now = new Date();
     return [String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0'),
@@ -55,12 +51,22 @@ export default async () => {
       ['January','February','March','April','May','June','July','August','September','October','November','December'][now.getMonth()]];
   };
   let displayed = format();
-  const clock = await text(displayed[0], Math.min(72, info.width * 0.20), 90);
-  const date = await text(displayed[1], Math.min(17, info.width * 0.045), 30);
-  const spacer = await UI.createElement(win, { item: { size: { x: 1, y: Math.max(10, info.height * 0.25) } } });
-  await UI.attach(win, content, spacer);
-  await text('↑', 36, 45, [217/255,106/255,29/255,1]);
-  await text('Swipe up to unlock', 16, 32);
+  const clock = await text(displayed[0], Math.min(TYPE.display, info.width * 0.2), Math.min(TYPE.display, info.width * 0.2) * 1.2);
+  const date = await text(displayed[1], Math.min(TYPE.heading, info.width * 0.05), 32);
+  await UI.attach(win, content, await UI.createElement(win, { item: { flexGrow: 1 } }));
+  const arrow = await text('↑', 30, 40, ORANGE);
+  await text('Swipe up to unlock', TYPE.caption + 1, 28, MUTED);
+  // A few upward nudges teach the gesture, then stop: no idle animation.
+  const nudge = await clips(win, arrow, {
+    hint: [
+      { time: 0.2, position: { x: 0, y: 0 } },
+      { time: 0.34, position: { x: 0, y: -SPACE.s }, ease: 'outQuad' },
+      { time: 0.52, position: { x: 0, y: 0 }, ease: 'inOutQuad' },
+      { time: 0.66, position: { x: 0, y: -SPACE.s }, ease: 'outQuad' },
+      { time: 0.84, position: { x: 0, y: 0 }, ease: 'inOutQuad' }
+    ]
+  });
+  const hint = () => nudge.play('hint').catch(error => Log.error('Lock hint: ' + error));
   const motion = await lockMotion(win, sheet, content, size);
   const exit = await clips(win, root, {
     leave: [{ time: 0.25, opacity: 0, ease: 'outCubic' }],
@@ -113,7 +119,7 @@ export default async () => {
   await UI.setOnMouseUp(win, root, point => {
     if (state !== 'locked' || leaving) return;
     const distance = gesture.move(point);
-    if (!gesture.up(point)) { cancel(); return; }
+    if (!gesture.up(point)) { cancel(); hint(); return; }
     leaving = true;
     fallback = setTimeout(finish, 700);
     enqueue(async () => {
@@ -135,6 +141,7 @@ export default async () => {
     enqueue(async () => {
       await exit.play('restore');
       await motion.play('enter');
+      hint();
     });
   });
   const refresh = async () => {

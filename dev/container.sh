@@ -8,32 +8,34 @@ usage() {
 Usage: ./local-dev.sh [container options] [-- session options]
   --engine COMMAND         podman or docker; detected automatically
   --koya-version VERSION   Koya repository version; default latest
-                           'latest' refreshes the image without cache
   --hyprland-version VER   Alpine package version; default 0.54.3-r0
   --image NAME             Local image tag; default koya-phone-dev:alpine3.24
-  --no-image-build         Reuse an already built image
+  --rebuild-image          Rebuild the image; refresh latest Koya without cache
+  --no-image-build         Require an existing image, even with version options
   --check                  Build and run development checks without a desktop
   --gpu DEVICE             Share this render device (repeatable); default all
                            /dev/dri/renderD* nodes accessible to your user
   --help                   Show this help
 Examples:
   ./local-dev.sh
-  ./local-dev.sh --koya-version latest -- --size 540x1170
-  ./local-dev.sh --no-image-build -- --no-build
+  ./local-dev.sh --rebuild-image
+  ./local-dev.sh -- --no-build
+Existing images are reused. Missing images and explicit version options build.
 The image installs signed Koya release packages and all development dependencies.
 HELP
 }
-engine= koya_version=latest hyprland_version=0.54.3-r0 image=koya-phone-dev:alpine3.24 build_image=1 run_checks=0
+engine= koya_version=latest hyprland_version=0.54.3-r0 image=koya-phone-dev:alpine3.24 build_image=auto run_checks=0 versions_requested=0
 gpus=() dev_args=()
 need_value() { [[ $# -ge 2 && -n "$2" ]] || fail "$1 requires a value"; }
 while (( $# )); do
     case "$1" in
         --engine) need_value "$@"; engine=$2; shift;;
-        --koya-version) need_value "$@"; koya_version=$2; shift;;
-        --hyprland-version) need_value "$@"; hyprland_version=$2; shift;;
+        --koya-version) need_value "$@"; koya_version=$2; versions_requested=1; shift;;
+        --hyprland-version) need_value "$@"; hyprland_version=$2; versions_requested=1; shift;;
         --image) need_value "$@"; image=$2; shift;;
         --gpu) need_value "$@"; gpus+=("$2"); shift;;
         --no-image-build) build_image=0;;
+        --rebuild-image) build_image=1;;
         --check) run_checks=1;;
         --help|-h) usage; exit;;
         --) shift; dev_args=("$@"); break;;
@@ -68,6 +70,13 @@ else
         [[ -c "$gpu" && -r "$gpu" && -w "$gpu" && "$gpu" == /dev/dri/renderD* ]] || fail "Not an accessible render device: $gpu"
     done
 fi
+if [[ "$build_image" == auto ]]; then
+    if (( versions_requested )) || ! "$engine" image inspect "$image" >/dev/null 2>&1; then
+        build_image=1
+    else
+        build_image=0
+    fi
+fi
 if (( build_image )); then
     # Stage a small context so neither engine uploads build artifacts or .git.
     context=$(mktemp -d /tmp/koya-container-build.XXXXXX)
@@ -82,6 +91,8 @@ if (( build_image )); then
     "$engine" "${build_args[@]}" "$context"
     rm -rf "$context"
     trap - EXIT
+else
+    "$engine" image inspect "$image" >/dev/null 2>&1 || fail "Missing local image $image; omit --no-image-build to create it."
 fi
 run_args=(run --rm --init --user "$(id -u):$(id -g)"
     --security-opt label=disable

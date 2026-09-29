@@ -15,13 +15,15 @@ export async function clips(win, element, definitions) {
 }
 
 export async function buttonMotion(win, element, side, index) {
-  // Centre the visual scale. Layout and its hit-test bounds remain unchanged.
+  // `side` is a square's edge or a { x, y } size. Centre the visual scale;
+  // layout and its hit-test bounds remain unchanged.
+  const size = typeof side === 'number' ? { x: side, y: side } : side;
   const pose = (scale = 1, y = 0, x = 0) => ({
     scale: { x: scale, y: scale },
-    position: { x: side * (1 - scale) / 2 + x, y: side * (1 - scale) / 2 + y }
+    position: { x: size.x * (1 - scale) / 2 + x, y: size.y * (1 - scale) / 2 + y }
   });
   const delay = index * 0.055;
-  const start = { opacity: 0, ...pose(0.98, side * 0.1125) };
+  const start = { opacity: 0, ...pose(0.98, Math.min(size.x, size.y) * 0.1125) };
   return clips(win, element, {
     enter: [
       { time: 0, ...start },

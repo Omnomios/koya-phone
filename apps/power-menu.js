@@ -5,10 +5,8 @@ import * as Log from 'Helix/Log';
 import { connect, call } from './session.js';
 import { clips, buttonMotion } from './motion.js';
 import { haptic } from './haptics.js';
-
-// Orange and warm cream from the Koya fish, on its deep green background.
-const CREAM = [244 / 255, 233 / 255, 216 / 255, 1];
-const INK = [0.065, 0.13, 0.105, 1];
+import { text as textElement, label as labelElement } from './touch-ui.js';
+import { CREAM, INK, MUTED, DISABLED, CARD_PRESSED, GUTTER, SPACE, RADIUS, TYPE } from './theme.js';
 const ACTIONS = [
   { label: 'Power off', icon: 'power-off', method: 'PowerOff', capability: 'CanPowerOff', pending: 'Powering off…' },
   { label: 'Restart', icon: 'restart', method: 'Reboot', capability: 'CanReboot', pending: 'Restarting…' },
@@ -30,17 +28,16 @@ export default async () => {
   await Compositor.setWindowRenderingEnabled(win, false);
   await Compositor.setClearColor(win, 0, 0, 0, 0);
 
-  // Large touch targets on the phone. Rotate into a row on wide displays rather
-  // than squeezing three tall buttons into a short screen.
+  // Portrait: full-width rows within thumb reach, icon then label. Wide
+  // displays use a row of square tiles rather than three short rows.
   const horizontal = info.width > info.height;
-  const gap = 20;
-  const side = Math.floor(Math.min(160,
-    horizontal ? (info.width - 48 - 2 * gap) / 3 : info.width - 48,
-    horizontal ? info.height - 90 : (info.height - 90 - 2 * gap) / 3));
-  const groupWidth = horizontal ? 3 * side + 2 * gap : side;
-  const groupHeight = horizontal ? side : 3 * side + 2 * gap;
-  const iconSize = Math.round(side * 0.42);
-  const labelSize = Math.round(Math.min(22, side * 0.15));
+  const gap = horizontal ? 20 : SPACE.m;
+  const square = Math.floor(Math.min(160, (info.width - 48 - 2 * gap) / 3, info.height - 90));
+  const tile = horizontal ? { x: square, y: square } : { x: Math.min(420, info.width - 2 * GUTTER), y: 80 };
+  const groupWidth = horizontal ? 3 * tile.x + 2 * gap : tile.x;
+  const groupHeight = horizontal ? tile.y : 3 * tile.y + 2 * gap;
+  const iconSize = horizontal ? Math.round(square * 0.42) : 36;
+  const labelSize = horizontal ? Math.round(Math.min(22, square * 0.15)) : TYPE.heading;
   let state = {};
   let requesting = false;
   let closing = false;
@@ -73,19 +70,13 @@ export default async () => {
       }
       if (button.enabled !== enabled) {
         button.enabled = enabled;
-        await UI.setTextColour(win, button.label, enabled ? CREAM : [0.48, 0.49, 0.44, 1]);
+        await UI.setTextColour(win, button.label, enabled ? CREAM : DISABLED);
       }
     }
   };
-  const text = async (parent, value, size, width, height) => {
-    const id = await UI.createElement(win, {
-      renderable: { type: 'text', string: value, size, font: '/rom/fonts/SourceSans3-Regular.ttf', colour: CREAM },
-      item: { size: { x: width, y: height } }, contentAlign: { x: 'center', y: 'center' }
-    });
-    await UI.attach(win, parent, id);
-    await UI.setTextVerticalAlign(win, id, 'center');
-    return id;
-  };
+  const text = (parent, value, size, width, height, colour = CREAM, align = 'center') => align === 'start'
+    ? labelElement(win, parent, value, size, width, height, colour)
+    : textElement(win, parent, value, size, width, height, colour);
   const click = async (element, handler) => {
     await UI.setHitTarget(win, element, true);
     await UI.setOnMouseClick(win, element, handler);
@@ -115,7 +106,7 @@ export default async () => {
   const root = await UI.createElement(win, {
     renderable: { type: 'box', colour: [0.015, 0.035, 0.025, 0.7] },
     contentAlign: 'fill',
-    layout: { type: 'column', justifyContent: 'center', gap: 16,
+    layout: { type: 'column', justifyContent: 'center', gap: SPACE.l,
       padding: { l: (info.width - groupWidth) / 2, r: (info.width - groupWidth) / 2, t: 0, b: 0 } },
     item: { size: { x: info.width, y: info.height } }
   });
@@ -158,20 +149,21 @@ export default async () => {
   for (const [index, action] of ACTIONS.entries()) {
     // Koya hit-tests the fixed layout. This group is for shared visual motion,
     // not a separate hit area; its own element receives the pointer callbacks.
-    const moving = await UI.createElement(win, { item: { size: { x: side, y: side } } });
+    const moving = await UI.createElement(win, { item: { size: tile } });
     await UI.attach(win, group, moving);
     await UI.setInheritAnimation(win, moving, true);
     await UI.setElementId(win, moving, 'power-menu-motion-' + index);
-    const motion = await buttonMotion(win, moving, side, index);
+    const motion = await buttonMotion(win, moving, tile, index);
     const button = await UI.createElement(win, {
-      renderable: { type: 'box', colour: INK, cornerRadius: Math.round(side * 0.12) },
-      layout: { type: 'column', justifyContent: 'center', gap: 12 },
-      item: { size: { x: side, y: side } }, contentAlign: 'fill'
+      renderable: { type: 'box', colour: INK, cornerRadius: RADIUS.surface, cornerResolution: 16 },
+      layout: horizontal ? { type: 'column', justifyContent: 'center', gap: 12 }
+        : { type: 'row', alignItems: 'center', gap: SPACE.l, padding: { l: SPACE.xl, r: SPACE.l, t: 0, b: 0 } },
+      item: { size: tile }, contentAlign: 'fill'
     });
     await UI.attach(win, moving, button);
     const colourMotion = await clips(win, button, {
       rest: [{ time: 0.18, colour: INK, ease: 'outCubic' }],
-      pressed: [{ time: 0.06, colour: [0.22, 0.32, 0.22, 1], ease: 'outQuad' }],
+      pressed: [{ time: 0.06, colour: CARD_PRESSED, ease: 'outQuad' }],
       focused: [{ time: 0.12, colour: [0.15, 0.25, 0.18, 1], ease: 'outCubic' }],
       disabled: [{ time: 0.16, colour: [0.06, 0.085, 0.07, 1], ease: 'outCubic' }]
     });
@@ -181,10 +173,11 @@ export default async () => {
         frames: [{ size: { x: iconSize, y: iconSize }, origin: { x: 0, y: 0 },
           aabb: { min: { x: 0, y: 0 }, max: { x: 160, y: 160 } }, colour: [1, 1, 1, 1] }]
       },
-      item: { size: { x: side, y: iconSize } }, contentAlign: { x: 'center', y: 'center' }
+      item: { size: horizontal ? { x: tile.x, y: iconSize } : { x: iconSize, y: tile.y } }, contentAlign: { x: 'center', y: 'center' }
     });
     await UI.attach(win, button, icon);
-    const label = await text(button, action.label, labelSize, side, 32);
+    const label = horizontal ? await text(button, action.label, labelSize, tile.x, 32)
+      : await text(button, action.label, labelSize, tile.x - SPACE.xl - SPACE.l * 2 - iconSize, tile.y, CREAM, 'start');
     buttons.push({ button, label, motion, colourMotion });
     await click(moving, async () => {
       pressed = -1;
@@ -208,7 +201,7 @@ export default async () => {
     await UI.setOnMouseUp(win, moving, () => release());
     await UI.setOnMouseExit(win, moving, () => release(true));
   }
-  status = await text(root, messageText, 13, groupWidth, 32);
+  status = await text(root, messageText, TYPE.caption, groupWidth, 32, MUTED);
   statusMotion = await clips(win, status, {
     enter: [{ time: 0, opacity: 0, position: { x: 0, y: 12 } },
       { time: 0.16, opacity: 0, position: { x: 0, y: 12 } },

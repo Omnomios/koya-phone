@@ -6,14 +6,16 @@ import * as Process from 'Module/process';
 import * as Assets from 'Koya/Assets';
 import { call } from './session.js';
 import { clips } from './motion.js';
-import { text, button } from './touch-ui.js';
-import { CREAM, ORANGE, INK, BAR_HEIGHT, NAV_HEIGHT } from './theme.js';
+import { text, label, button, backdrop, sheetHeader } from './touch-ui.js';
+import { CREAM, ORANGE, INK, CARD, TONAL, MUTED, CLEAR, alpha, BAR_HEIGHT, NAV_HEIGHT, GUTTER, SPACE, RADIUS, TYPE, HEADER_HEIGHT, TOUCH } from './theme.js';
 import { decodeDesktop, nextDesktop, appWindow, desktopCards } from './desktop-model.js';
 
 async function createView(display, initialMode, initialApps, initialSnapshot, onRefresh, trace) {
+  // The drawer sits between the top bar and navigation, so both stay visible
+  // and live: Home dismisses it and Apps/Desktops switch or close it.
   const win = await Compositor.createWindow({
-    role: 'overlay', anchor: 'top-left', display: display.display,
-    size: { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) },
+    role: 'overlay', anchor: 'top-left', display: display.display, offset: { x: 0, y: BAR_HEIGHT },
+    size: { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) - BAR_HEIGHT - NAV_HEIGHT },
     exclusiveZone: -1, namespace: 'koya-desktop-view', msaaSamples: 1,
     transparent: true, renderingEnabled: false, keyboardInteractivity: 'none', acceptPointerEvents: false
   });
@@ -23,21 +25,16 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
   const info = await Compositor.getWindowInfo(win);
   trace('window created');
   const root = await UI.createElement(win, {
-    renderable: { type: 'box', colour: [INK[0], INK[1], INK[2], 0.98] },
+    renderable: { type: 'box', colour: alpha(INK, 0.98) },
     contentAlign: 'fill',
     item: { size: { x: info.width, y: info.height } }
   });
   await UI.attachRoot(win, root);
   await UI.setElementId(win, root, 'desktop-view-root');
   await UI.setInheritAnimation(win, root, true);
-  const backdrop = await UI.createElement(win, {
-    renderable: { type: 'sprite', texture: '/rom/assets/earthy-green-wallpaper.png', frame: 0,
-      frames: [{ size: { x: info.width, y: info.height }, aabb: { min: { x: 0, y: 0 }, max: { x: 864, y: 1821 } }, colour: [0.15,0.19,0.17,1] }] },
-    item: { size: { x: info.width, y: info.height } }, contentAlign: 'fill'
-  });
-  await UI.attach(win, root, backdrop);
+  await backdrop(win, root, { x: info.width, y: info.height }, BAR_HEIGHT);
   const content = await UI.createElement(win, {
-    layout: { type: 'column', gap: 24, padding: { l: 28, r: 28, t: BAR_HEIGHT + 20, b: NAV_HEIGHT + 20 } },
+    layout: { type: 'column', gap: SPACE.l, padding: { l: GUTTER, r: GUTTER, t: SPACE.s, b: GUTTER } },
     item: { size: { x: info.width, y: info.height } }
   });
   await UI.attach(win, root, content);
@@ -77,8 +74,8 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
       await done;
     } finally { clearTimeout(fallback); }
   };
-  const width = info.width - 56;
-  const ghost = { colour: [0,0,0,0] };
+  const width = info.width - 2 * GUTTER;
+  const ghost = { colour: CLEAR };
   const shellIcon = name => '/rom/assets/launcher/' + name + '.png';
   trace('window shell built');
   const leave = async action => {
@@ -94,16 +91,21 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
     }
   };
   const dismiss = () => leave(() => call('DismissDesktopView'));
-  const header = await UI.createElement(win, { layout: { type: 'row', gap: 8 }, item: { size: { x: width, y: 52 } } });
-  await UI.attach(win, content, header);
-  const title = await text(win, header, mode === 'apps' ? 'Apps' : 'Desktops', 32, width - 92, 52);
-  await UI.setContentAlign(win, title, { x: 'start', y: 'center' });
-  const indicator = await UI.createElement(win, {
-    renderable: { type: 'circle', aabb: { min: { x: 0, y: 0 }, max: { x: 6, y: 6 } },
-      resolution: 16, colour: ORANGE, origin: { x: 0.5, y: 0.5 } },
-    item: { size: { x: 24, y: 52 } }, contentAlign: { x: 'center', y: 'center' }
-  });
-  await UI.attach(win, header, indicator);
+  let indicator;
+  const { heading: title } = await sheetHeader(win, content, mode === 'apps' ? 'Apps' : 'Desktops', width,
+    [{ icon: shellIcon('close'), handler: () => dismiss() }],
+    { width: 24, build: async row => {
+      // A fixed slot: the indicator is disabled while idle, which would
+      // otherwise collapse it and shift the close button off the gutter.
+      const slot = await UI.createElement(win, { item: { size: { x: 24, y: HEADER_HEIGHT } } });
+      await UI.attach(win, row, slot);
+      indicator = await UI.createElement(win, {
+        renderable: { type: 'circle', aabb: { min: { x: 0, y: 0 }, max: { x: 6, y: 6 } },
+          resolution: 16, colour: ORANGE, origin: { x: 0.5, y: 0.5 } },
+        item: { size: { x: 24, y: HEADER_HEIGHT } }, contentAlign: { x: 'center', y: 'center' }
+      });
+      await UI.attach(win, slot, indicator);
+    } });
   await UI.setElementId(win, indicator, 'desktop-refresh-indicator');
   await UI.setEnabled(win, indicator, false);
   const loading = await clips(win, indicator, {
@@ -111,7 +113,6 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
       { time: 0.4, opacity: 1, scale: { x: 1, y: 1 }, ease: 'inOutQuad' },
       { time: 0.8, opacity: 0.35, scale: { x: 0.8, y: 0.8 }, ease: 'inOutQuad', looping: true }]
   });
-  await button(win, header, '', 52, 52, dismiss, { ...ghost, icon: shellIcon('close'), iconSize: 23 });
   const launch = async (app, feedback) => {
     if (busy || closed || !shown || pendingLaunch) return;
     const existing = !fetching && appWindow(app, snapshot.clients);
@@ -153,25 +154,29 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
     if (busy || !snapshot) return;
     await UI.setTextString(win, title, mode === 'apps' ? 'Apps' : 'Desktops');
     if (board) await UI.destroyElement(win, board);
+    const boardHeight = info.height - SPACE.s - GUTTER - HEADER_HEIGHT - SPACE.l;
     board = await UI.createElement(win, {
-      layout: { type: 'column', gap: 24 }, item: { size: { x: width, y: info.height - BAR_HEIGHT - NAV_HEIGHT - 40 - 76 } }
+      layout: { type: 'column', gap: SPACE.l }, item: { size: { x: width, y: boardHeight } }
     });
     await UI.attach(win, content, board);
-    if (message) await text(win, board, message, 17, width, 32, ORANGE);
-    const columns = Math.max(1, Math.floor((width + 20) / 152));
-    const tileWidth = (width - 20 * (columns - 1)) / columns;
-    const tileHeight = 148;
-    const available = info.height - BAR_HEIGHT - NAV_HEIGHT - 40 - 52 - 24 - (message ? 56 : 0);
-    const rows = Math.max(1, Math.floor((available - 76 + 24) / (tileHeight + 24)));
+    if (message) await label(win, board, message, TYPE.caption + 2, width, 32, ORANGE);
+    const columnGap = SPACE.m, rowGap = mode === 'apps' ? SPACE.l : SPACE.m;
+    const columns = Math.max(1, Math.floor((width + columnGap) / (150 + columnGap)));
+    const tileWidth = (width - columnGap * (columns - 1)) / columns;
+    const tileHeight = mode === 'apps' ? 128 : 172;
+    // Reserve the pager row whenever the grid could overflow.
+    const available = boardHeight - (message ? 32 + SPACE.l : 0) - TOUCH - SPACE.l;
+    const rows = Math.max(1, Math.floor((available + rowGap) / (tileHeight + rowGap)));
     const capacity = columns * rows;
     const items = mode === 'apps' ? apps : desktopCards(snapshot);
     const pages = Math.max(1, Math.ceil(items.length/capacity));
     page = Math.min(page, pages - 1);
     const visible = items.slice(page*capacity, (page+1)*capacity);
     const visibleRows = Math.max(1, Math.ceil(visible.length/columns));
+    const gridHeight = count => count*(tileHeight+rowGap)-rowGap;
     const grid = await UI.createElement(win, {
-      layout: { type: 'grid', gridColumns: columns, gridRows: visibleRows, columnGap: 20, rowGap: 24, gridAlignItems: 'start', gridJustifyItems: 'start' },
-      item: { size: { x: width, y: visibleRows*(tileHeight+24)-24 } }
+      layout: { type: 'grid', gridColumns: columns, gridRows: visibleRows, columnGap, rowGap, gridAlignItems: 'start', gridJustifyItems: 'start' },
+      item: { size: { x: width, y: visibleRows*(tileHeight+rowGap)-rowGap } }
     });
     await UI.attach(win, board, grid);
     await UI.setElementId(win, grid, 'desktop-view-grid');
@@ -179,38 +184,59 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
       if (mode === 'apps') {
         let feedback;
         const target = await button(win, grid, item.name, tileWidth, tileHeight, () => launch(item, feedback),
-          { ...ghost, icon: item.icon || shellIcon('application'), iconSize: 80, size: 17, labelHeight: 40, gap: 12,
+          { ...ghost, icon: item.icon || shellIcon('application'), iconSize: 72, size: TYPE.caption + 2, labelHeight: 32, gap: SPACE.s,
             onFeedback: value => { feedback = value; } });
         await UI.setElementId(win, target, 'desktop-app-' + item.id);
       } else {
-        const card = await UI.createElement(win, { layout: { type: 'column', gap: 8 }, item: { size: { x: tileWidth, y: tileHeight } } });
-        await UI.attach(win, grid, card);
+        // A card per desktop: which desktop, what it holds and how to close it.
+        // Layout-less frame: the card and its active outline share its bounds.
+        const frame = await UI.createElement(win, { item: { size: { x: tileWidth, y: tileHeight } } });
+        await UI.attach(win, grid, frame);
+        const card = await UI.createElement(win, {
+          renderable: { type: 'box', colour: item.active ? TONAL : CARD, cornerRadius: RADIUS.surface, cornerResolution: 16 },
+          layout: { type: 'column', padding: { l: SPACE.m, r: SPACE.xs, t: SPACE.xs, b: SPACE.m } },
+          item: { size: { x: tileWidth, y: tileHeight } }, contentAlign: 'fill'
+        });
+        await UI.attach(win, frame, card);
+        if (item.active) {
+          const ring = await UI.createElement(win, {
+            renderable: { type: 'box', colour: ORANGE, inset: 2, cornerRadius: RADIUS.surface, cornerResolution: 16,
+              aabb: { min: { x: 0, y: 0 }, max: { x: tileWidth, y: tileHeight } } },
+            item: { size: { x: tileWidth, y: tileHeight } }, contentAlign: 'fill'
+          });
+          await UI.attach(win, frame, ring);
+        }
         const primary = item.windows.find(window => window.focusHistoryID === 0) || item.windows[0];
         const app = primary && apps.find(candidate => appWindow(candidate, [primary]));
-        const label = app?.name || (primary ? (primary.title || primary.class).substring(0,28) : 'Empty');
+        const name = app?.name || (primary ? (primary.title || primary.class).substring(0,28) : 'Empty');
+        const extra = item.windows.length > 1 ? ' · ' + item.windows.length + ' windows' : '';
         const select = () => leave(() => primary ? call('FocusWindow', 's', primary.address) : call('SwitchDesktop', 'u', item.id));
-        const target = await button(win, card, '', tileWidth, 92, select, {
-          ...ghost, icon: app?.icon || shellIcon('application'), iconSize: 64
-        });
-        await UI.setElementId(win, target, 'desktop-card-' + item.id);
-        const caption = await UI.createElement(win, { layout: { type: 'row', gap: 8 }, item: { size: { x: tileWidth, y: 48 } } });
-        await UI.attach(win, card, caption);
-        await button(win, caption, label, tileWidth - (primary ? 56 : 0), 48, select,
-          { ...ghost, size: 17, labelHeight: 40, accent: item.active ? ORANGE : CREAM });
-        if (primary) await button(win, caption, '', 48, 48, async () => {
+        const top = await UI.createElement(win, { layout: { type: 'row', alignItems: 'center' }, item: { size: { x: tileWidth - SPACE.m - SPACE.xs, y: 40 } } });
+        await UI.attach(win, card, top);
+        await label(win, top, 'Desktop ' + (item.id - 1) + extra, TYPE.caption - 1, tileWidth - SPACE.m - SPACE.xs - 40, 40, item.active ? ORANGE : MUTED);
+        if (primary) await button(win, top, '', 40, 40, async () => {
           if (busy) return;
           try { await call('CloseWindow', 's', primary.address); await onRefresh(); }
           catch (error) { message = 'Unable to close window'; Log.error(String(error)); await render(); }
-        }, { ...ghost, icon: shellIcon('close'), iconSize: 18 });
+        }, { ...ghost, icon: shellIcon('close'), iconSize: 16, radius: RADIUS.control });
+        else await UI.attach(win, top, await UI.createElement(win, { item: { size: { x: 40, y: 40 } } }));
+        const target = await button(win, card, name, tileWidth - 2 * SPACE.m, tileHeight - 40 - SPACE.xs - SPACE.m, select, {
+          ...ghost, icon: app?.icon || shellIcon('application'), iconSize: primary ? 56 : 40, size: TYPE.caption + 2, labelHeight: 28,
+          gap: SPACE.s, labelColour: primary ? CREAM : MUTED
+        });
+        await UI.setElementId(win, target, 'desktop-card-' + item.id);
       }
     }
-    if (!items.length) await text(win, grid, mode === 'apps' ? 'No applications installed' : '', 20, width, 80);
+    if (!items.length) await text(win, board, mode === 'apps' ? 'No applications installed' : 'No open applications', TYPE.body, width, 120, MUTED);
     if (pages > 1) {
-      const footer = await UI.createElement(win, { layout: { type: 'row', gap: 8 }, item: { size: { x: width, y: 52 } } });
+      // Pager sits at the bottom edge of the sheet, within thumb reach.
+      const spacer = boardHeight - gridHeight(visibleRows) - (message ? 32 + SPACE.l : 0) - TOUCH - 2 * SPACE.l;
+      if (spacer > 0) await UI.attach(win, board, await UI.createElement(win, { item: { size: { x: width, y: spacer } } }));
+      const footer = await UI.createElement(win, { layout: { type: 'row', justifyContent: 'center', alignItems: 'center' }, item: { size: { x: width, y: TOUCH } } });
       await UI.attach(win, board, footer);
-      await button(win, footer, '', 52, 52, () => { if (!busy && page > 0) { page--; render(); } }, { ...ghost, icon: shellIcon('previous'), iconSize: 24 });
-      await text(win, footer, Array.from({ length: pages }, (_, i) => i === page ? '●' : '○').join('  '), 14, width - 120, 52, ORANGE);
-      await button(win, footer, '', 52, 52, () => { if (!busy && page+1 < pages) { page++; render(); } }, { ...ghost, icon: shellIcon('next'), iconSize: 24 });
+      await button(win, footer, '', 64, TOUCH, () => { if (!busy && page > 0) { page--; render(); } }, { ...ghost, icon: shellIcon('previous'), iconSize: 22, radius: RADIUS.control });
+      await text(win, footer, Array.from({ length: pages }, (_, i) => i === page ? '●' : '○').join('  '), TYPE.caption - 2, 120, TOUCH, ORANGE);
+      await button(win, footer, '', 64, TOUCH, () => { if (!busy && page+1 < pages) { page++; render(); } }, { ...ghost, icon: shellIcon('next'), iconSize: 22, radius: RADIUS.control });
     }
   };
   await motion.onEnd('enter', async () => {
@@ -242,7 +268,9 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
       await Compositor.setWindowRenderingEnabled(win, true);
       await motion.play('enter');
       trace('entrance started');
-      await Promise.all([Compositor.setKeyboardInteractivity(win, 'exclusive'), Compositor.setPointerEvents(win, true),
+      // Exclusive keyboard focus would also confine the pointer to this layer,
+      // leaving the visible navigation and top bar unresponsive.
+      await Promise.all([Compositor.setKeyboardInteractivity(win, 'on_demand'), Compositor.setPointerEvents(win, true),
         fetching ? loading.play('pulse') : Promise.resolve()]);
       await call('DesktopViewVisible', 'b', true);
       trace('shown');

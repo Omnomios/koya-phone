@@ -1,6 +1,7 @@
 import * as Compositor from 'Koya/Compositor';
 import * as UI from 'Helix/UserInterface';
 import { clips } from './motion.js';
+import { RADIUS } from './theme.js';
 
 // Keep warm surfaces transparent and input-free while parked. No idle timers.
 export async function notificationSurface(display, namespace, size, offset, colour, keyboard = 'none', options = {}) {
@@ -11,7 +12,7 @@ export async function notificationSurface(display, namespace, size, offset, colo
     renderingEnabled: false, keyboardInteractivity: 'none', acceptPointerEvents: false });
   await Compositor.setClearColor(win, 0, 0, 0, 0);
   const root = await UI.createElement(win, {
-    renderable: { type: 'box', colour, cornerRadius: keyboard === 'none' ? 20 : 0, origin: { x: 0.5, y: 0.5 } },
+    renderable: { type: 'box', colour, cornerRadius: keyboard === 'none' ? RADIUS.surface : 0, cornerResolution: 16, origin: { x: 0.5, y: 0.5 } },
     item: { size }, contentAlign: 'fill', inheritAnimation: true
   });
   await UI.attachRoot(win, root);

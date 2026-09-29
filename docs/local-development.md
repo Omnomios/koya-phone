@@ -25,8 +25,8 @@ a desktop terminal without `sudo`:
 ```
 
 The default image uses Alpine **3.24**, Hyprland **0.54.3-r0** and the latest
-Koya release available in its repository. Each run refreshes the image so it
-can install the current release, and rebuilds changed native sources.
+Koya release available when the image is built. The first run builds the image;
+subsequent runs reuse it and rebuild changed native sources.
 The checkout is mounted at `/work/koya-phone`, so JavaScript and asset changes
 are available immediately; press **F5** to reload the UI.
 
@@ -37,8 +37,9 @@ Pass session options after `--`:
 ```
 
 `--koya-version VERSION` requests a specific APK version, provided it is still
-available in the repository. The default `latest` disables image build caching
-so a newer release can be installed. Koya and both plugins use the same version,
+available in the repository. Explicit Koya or Hyprland version options trigger
+an image build. Builds using `latest` disable image build caching to install the
+current release. Koya and both plugins use the same version,
 and require build 888 or newer.
 Use `--hyprland-version` for another 0.54.x version available in Alpine 3.24's
 repositories. The generated development configuration translates the phone's
@@ -47,14 +48,16 @@ nested Wayland frame-callback fix that prevents redraws stalling until focus
 changes. Changing the Alpine base or Hyprland's minor version requires editing
 `dev/Containerfile` and checking configuration compatibility.
 
-To skip the image build, or also skip rebuilding unchanged native components:
+To refresh the image and install the latest Koya release, or skip rebuilding
+native components when launching:
 
 ```bash
-./local-dev.sh --no-image-build
-./local-dev.sh --no-image-build -- --no-build
+./local-dev.sh --rebuild-image
+./local-dev.sh -- --no-build
 ```
 
-With `--no-image-build`, the existing image determines the installed versions.
+`--no-image-build` requires an existing image and skips building even when
+version options are supplied. Reused images determine the installed versions.
 `--engine podman` or `--engine docker` selects the container engine explicitly;
 `--image NAME` selects a local image tag. `--gpu /dev/dri/renderD128` limits
 render-device sharing instead of sharing all accessible render nodes.
@@ -173,7 +176,8 @@ Wayland desktop or GPU:
 ./local-dev.sh --check
 ```
 
-Use `--no-image-build --check` to reuse the image. These Bash/native checks cover
+Checks also reuse an existing image; use `--rebuild-image --check` to refresh it.
+These Bash/native checks cover
 private service contracts, mock power and Wi-Fi actions, installed release
 discovery, startup, restart, cleanup and release verification. They use
 simulated compositor IPC and UI clients. Visual rendering still needs an

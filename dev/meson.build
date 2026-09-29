@@ -18,3 +18,4 @@ test('local-dev', find_program('bash'),
   args: [files('tests/session.sh'), meson.current_build_dir()],
   depends: [services, coordinator, display, fixture], timeout: 30)
 test('koya-release', find_program('bash'), args: files('tests/release.sh'), timeout: 10)
+test('container-launcher', find_program('bash'), args: files('tests/container.sh'), timeout: 10)

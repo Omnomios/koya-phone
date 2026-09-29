@@ -5,21 +5,23 @@ import * as Event from 'Helix/Event';
 import * as Log from 'Helix/Log';
 import { wifiNetwork } from './wifi-network.js';
 import { keyboardVisible } from './session-keyboard.js';
-import { button, icon, text } from './touch-ui.js';
+import { button, icon, text, label as textLabel, pill, toggle, sheetHeader } from './touch-ui.js';
 import { clips } from './motion.js';
-import { FONT, CREAM, ORANGE, INK, BAR_HEIGHT, NAV_HEIGHT } from './theme.js';
+import { FONT, CREAM, ORANGE, INK, CARD, MUTED, CLEAR, BAR_HEIGHT, NAV_HEIGHT, GUTTER, SPACE, RADIUS, TYPE, HEADER_HEIGHT, TOUCH, TRAILING_INSET } from './theme.js';
 
-const CARD = [0.095, 0.18, 0.14, 1], MUTED = [0.66, 0.72, 0.66, 1];
-const GHOST = { colour: [0, 0, 0, 0] };
+const GHOST = { colour: CLEAR };
+const ROW = 72, LOCK = 24, ROW_RIGHT = TRAILING_INSET - LOCK / 2;
 const glyph = name => '/rom/assets/launcher/' + name + '.png';
 export default async (options = {}) => {
   const display = (await Compositor.listDisplays())[0];
+  const requested = { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) - BAR_HEIGHT - NAV_HEIGHT };
   const win = await Compositor.createWindow({ role: 'window', title: 'Wi-Fi', appId: 'org.koya.Wifi', msaaSamples: 1,
-    size: { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) - BAR_HEIGHT - NAV_HEIGHT },
-    display: display.display, acceptPointerEvents: true });
+    size: requested, display: display.display, acceptPointerEvents: true });
   await Compositor.setWindowRenderingEnabled(win, false);
   await Compositor.setClearColor(win, ...INK);
-  const info = await Compositor.getWindowInfo(win), size = { x: info.width, y: info.height }, width = size.x - 48;
+  // Before the first configure, window info can report the whole output.
+  // The tiled window is never taller than the space between the bars.
+  const info = await Compositor.getWindowInfo(win), size = { x: info.width, y: Math.min(info.height, requested.y) }, width = size.x - 2 * GUTTER;
   const root = await UI.createElement(win, { item: { size } }); await UI.attachRoot(win, root);
   let board, modal, field, errorLabel, form, password = '', preedit = '', reveal = false, focused = false, page = 0, key;
   let entry, focusRing, caret, caretBlink, caretRunning = false, submitted = false;
@@ -39,11 +41,7 @@ export default async (options = {}) => {
       else if (!visible && manualKeyboard) { manualKeyboard = false; await keyboardVisible(false); }
     } catch (error) { Log.error('Wi-Fi text input: ' + error); }
   };
-  const label = async (parent, value, fontSize, w, h, colour = CREAM) => {
-    const id = await UI.createElement(win, { renderable: { type: 'text', string: value, size: fontSize, font: FONT, colour, layoutMode: 'word-wrap' },
-      item: { size: { x: w, y: h } }, contentAlign: { x: 'start', y: 'center' }, clipToBounds: true });
-    await UI.attach(win, parent, id); await UI.setTextVerticalAlign(win, id, 'center'); return id;
-  };
+  const label = (parent, value, fontSize, w, h, colour = CREAM) => textLabel(win, parent, value, fontSize, w, h, colour);
   const closeForm = async () => {
     form = undefined; password = ''; preedit = ''; focused = false; submitted = false;
     // Restore the cached list before tearing down the sheet. Keyboard transport
@@ -105,25 +103,22 @@ export default async (options = {}) => {
     if (board) await UI.setEnabled(win, board, false);
     modal = await UI.createElement(win, {
       renderable: { type: 'box', colour: INK }, item: { size, order: 1 }, contentAlign: 'fill', inheritAnimation: true,
-      layout: { type: 'column', gap: 12, padding: { l: 24, r: 24, t: 24, b: 0 } }
+      layout: { type: 'column', gap: SPACE.m, padding: { l: GUTTER, r: GUTTER, t: SPACE.s, b: 0 } }
     });
     await UI.attach(win, root, modal);
     const entrance = await clips(win, modal, { enter: [
       { time: 0, opacity: 0, position: { x: 0, y: 12 } },
       { time: 0.18, opacity: 1, position: { x: 0, y: 0 }, ease: 'outCubic' }
     ] });
-    const heading = await UI.createElement(win, { layout: { type: 'row', gap: 8 }, item: { size: { x: width, y: 64 } } });
-    await UI.attach(win, modal, heading);
-    await label(heading, network.name, 28, width - 72, 64);
-    await button(win, heading, '', 64, 64, () => enqueue(closeForm), { ...GHOST, icon: glyph('close'), iconSize: 24 });
+    await sheetHeader(win, modal, network.name, width, [{ icon: glyph('close'), handler: () => enqueue(closeForm) }]);
     entry = await UI.createElement(win, {
-      renderable: { type: 'box', colour: CARD, cornerRadius: 16, cornerResolution: 16 },
+      renderable: { type: 'box', colour: CARD, cornerRadius: RADIUS.control, cornerResolution: 16 },
       item: { size: { x: width, y: 72 } }, contentAlign: 'fill',
       onMouseDown: () => enqueue(focusField)
     });
     await UI.attach(win, modal, entry); await UI.setElementId(win, entry, 'wifi-password');
     focusRing = await UI.createElement(win, {
-      renderable: { type: 'box', colour: ORANGE, inset: 2, cornerRadius: 16, cornerResolution: 16,
+      renderable: { type: 'box', colour: ORANGE, inset: 2, cornerRadius: RADIUS.control, cornerResolution: 16,
         aabb: { min: { x: 0, y: 0 }, max: { x: width, y: 72 } } },
       item: { size: { x: width, y: 72 } }, contentAlign: 'fill'
     });
@@ -132,10 +127,12 @@ export default async (options = {}) => {
       item: { size: { x: width - 32, y: 72 }, margin: { l: 16, r: 16, t: 0, b: 0 } } });
     await UI.attach(win, entry, viewport);
     field = await UI.createElement(win, {
-      renderable: { type: 'text', string: 'Password', size: 22, font: FONT, colour: MUTED },
+      // Line metrics keep the baseline and left edge fixed as characters are
+      // typed; ink bounds would re-centre on every glyph's ascent and descent.
+      renderable: { type: 'text', string: 'Password', size: 22, font: FONT, colour: MUTED, justify: 'left', vAlign: 'center', metricsBasis: 'line' },
       item: { size: { x: width - 32, y: 72 } }, contentAlign: { x: 'start', y: 'center' }, contentPositioning: 'raw'
     });
-    await UI.attach(win, viewport, field); await UI.setTextVerticalAlign(win, field, 'center');
+    await UI.attach(win, viewport, field);
     caret = await UI.createElement(win, {
       renderable: { type: 'box', colour: ORANGE,
         aabb: { min: { x: 0, y: 0 }, max: { x: 2, y: 28 } } },
@@ -146,16 +143,17 @@ export default async (options = {}) => {
       { time: 0, opacity: 1 }, { time: 0.45, opacity: 0, ease: 'inOutQuad' },
       { time: 0.9, opacity: 1, ease: 'inOutQuad', looping: true }
     ] });
-    const helpers = await UI.createElement(win, { layout: { type: 'row', gap: 16 }, item: { size: { x: width, y: 56 } } });
+    const helpers = await UI.createElement(win, { layout: { type: 'row', gap: SPACE.s }, item: { size: { x: width, y: TOUCH } } });
     await UI.attach(win, modal, helpers);
-    await button(win, helpers, 'Paste', 100, 56, async () => {
+    await pill(win, helpers, 'Paste', 96, async () => {
       if (latest.working) return;
       try { password = (await Compositor.getClipboardText()).replace(/[\x00-\x1f\x7f]/g, '').slice(0, 512); preedit = ''; await enqueue(updateField); }
       catch (_) { await UI.setTextString(win, errorLabel, 'Clipboard unavailable'); }
-    }, GHOST);
-    await button(win, helpers, 'Show / hide', 160, 56, () => { reveal = !reveal; return enqueue(updateField); }, GHOST);
-    errorLabel = await label(modal, '', 17, width, 48, ORANGE);
-    await button(win, modal, 'Connect', width, 64, submit, { colour: CARD, labelColour: ORANGE, size: 22 });
+    });
+    await pill(win, helpers, 'Show / hide', 128, () => { reveal = !reveal; return enqueue(updateField); });
+    errorLabel = await label(modal, '', TYPE.caption + 1, width, 40, ORANGE);
+    // The one primary action on screen: filled, full width, thumb height.
+    await pill(win, modal, 'Connect', width, submit, { colour: ORANGE, labelColour: INK, height: 56, size: TYPE.body + 1 });
     // The field gains editable focus and activates the OSK when tapped.
     await updateField();
     await entrance.play('enter');
@@ -173,36 +171,42 @@ export default async (options = {}) => {
       if (errorLabel) await UI.setTextString(win, errorLabel, submitted ? latest.error || (latest.working ? latest.message : '') : '');
       return; // Keep the list intact underneath the sheet, including its layout.
     }
-    const count = Math.max(1, Math.floor((size.y - 260) / 84));
+    // Header, status line and footer are fixed; the list takes what remains,
+    // so Refresh and the pager always stay on screen.
+    const listHeight = size.y - SPACE.s - GUTTER - HEADER_HEIGHT - 32 - TOUCH - 3 * SPACE.m;
+    const count = Math.max(1, Math.floor((listHeight + SPACE.s) / (ROW + SPACE.s)));
     const pages = Math.max(1, Math.ceil(latest.networks.length / count)); page = Math.min(page, pages - 1);
     const nextKey = JSON.stringify([page, latest]); if (key === nextKey) return; key = nextKey;
     await Compositor.setWindowRenderingEnabled(win, false);
     try {
     if (board) await UI.destroyElement(win, board);
-    board = await UI.createElement(win, { layout: { type: 'column', gap: 12, padding: { l: 24, r: 24, t: 20, b: 20 } }, item: { size } });
+    board = await UI.createElement(win, { layout: { type: 'column', gap: SPACE.m, padding: { l: GUTTER, r: GUTTER, t: SPACE.s, b: GUTTER } }, item: { size } });
     await UI.attach(win, root, board);
     if (form) await UI.setEnabled(win, board, false);
     // Keep the password sheet above a rebuilt network list.
     if (modal) { await UI.detach(win, modal); await UI.attach(win, root, modal); }
-    const header = await UI.createElement(win, { layout: { type: 'row', gap: 8 }, item: { size: { x: width, y: 64 } } });
-    await UI.attach(win, board, header);
-    await label(header, 'Wi-Fi', 32, width - 152, 64);
-    await button(win, header, latest.enabled ? 'On' : 'Off', 72, 64, () => backend.toggle(), { ...GHOST, labelColour: latest.enabled ? ORANGE : CREAM });
-    await button(win, header, '', 64, 64, () => { backend.dispose(); keyboard(false); Engine.quit(); }, { ...GHOST, icon: glyph('close'), iconSize: 24 });
+    await sheetHeader(win, board, 'Wi-Fi', width, [{ icon: glyph('close'), handler: () => { backend.dispose(); keyboard(false); Engine.quit(); } }],
+      { width: 68, build: async row => {
+        const power = await toggle(win, row, !!latest.enabled, () => { if (latest.working) return; power.set(!latest.enabled); backend.toggle(); });
+        await UI.setElementId(win, power.id, 'wifi-power');
+      } });
     const status = latest.loading ? 'Finding networks…' : latest.error || latest.message || (!latest.hardware ? 'Wi-Fi is blocked by the device' : !latest.enabled ? 'Wi-Fi is off' : latest.scanning ? 'Finding networks…' : 'Available networks');
-    await label(board, status, 18, width, 48, latest.error ? ORANGE : MUTED);
-    const list = await UI.createElement(win, { layout: { type: 'column', gap: 12 }, item: { size: { x: width, y: count * 84 } } });
+    await label(board, status, TYPE.caption + 1, width, 32, latest.error ? ORANGE : MUTED);
+    const list = await UI.createElement(win, { layout: { type: 'column', gap: SPACE.s }, item: { size: { x: width, y: listHeight } } });
     await UI.attach(win, board, list);
     const visible = latest.enabled ? latest.networks.slice(page * count, (page + 1) * count) : [];
-    if (!visible.length && !latest.loading) await text(win, list, latest.enabled ? 'No networks found' : 'Turn Wi-Fi on to find networks', 22, width, 100, MUTED);
+    if (!visible.length && !latest.loading) await text(win, list, latest.enabled ? 'No networks found' : 'Turn Wi-Fi on to find networks', TYPE.body, width, 120, MUTED);
     for (const network of visible) {
-      const row = await UI.createElement(win, { renderable: { type: 'box', colour: CARD, cornerRadius: 16, cornerResolution: 16, origin: { x: 0.5, y: 0.5 } },
-        layout: { type: 'row', gap: 12, padding: { l: 16, r: 16, t: 0, b: 0 } }, item: { size: { x: width, y: 72 } }, contentAlign: 'fill' });
+      const row = await UI.createElement(win, { renderable: { type: 'box', colour: CARD, cornerRadius: RADIUS.surface, cornerResolution: 16, origin: { x: 0.5, y: 0.5 } },
+        layout: { type: 'row', gap: SPACE.s, alignItems: 'center', padding: { l: 16, r: ROW_RIGHT, t: 0, b: 0 } }, item: { size: { x: width, y: ROW } }, contentAlign: 'fill' });
       await UI.attach(win, list, row);
-      const mainWidth = width - 32 - (network.connected ? 108 : 0) - (network.saved ? 84 : 0);
+      // Every row ends in the same lock slot, so locks line up whether or not
+      // the row carries Disconnect/Forget; those sit just before the slot.
+      const trailing = (network.connected ? 104 + SPACE.s : 0) + (network.saved ? 80 + SPACE.s : 0) + SPACE.s + LOCK;
+      const mainWidth = width - 16 - ROW_RIGHT - trailing;
       const target = await UI.createElement(win, {
-        renderable: { type: 'box', colour: [0, 0, 0, 0], origin: { x: 0.5, y: 0.5 } },
-        layout: { type: 'row', gap: 12 }, item: { size: { x: mainWidth, y: 72 } },
+        renderable: { type: 'box', colour: CLEAR, origin: { x: 0.5, y: 0.5 } },
+        layout: { type: 'row', gap: SPACE.m, alignItems: 'center' }, item: { size: { x: mainWidth, y: ROW } },
         onMouseClick: () => select(network)
       });
       await UI.attach(win, row, target); await UI.setElementId(win, target, 'wifi-network-' + network.path.split('/').pop());
@@ -213,30 +217,34 @@ export default async (options = {}) => {
       await UI.setOnMouseDown(win, target, () => !latest.working && feedback.play('press'));
       await UI.setOnMouseUp(win, target, () => feedback.play('release'));
       await UI.setOnMouseExit(win, target, () => feedback.play('release'));
-      await icon(win, target, '/rom/assets/status/wifi-' + Math.max(0, Math.min(3, Math.ceil(Number(network.Strength) * 3 / 100))) + '.png', 28, 36, 72);
-      const detailWidth = mainWidth - 48 - (network.security !== 'open' ? 32 : 0);
-      const detail = await UI.createElement(win, { layout: { type: 'column', justifyContent: 'center', gap: 2 }, item: { size: { x: detailWidth, y: 72 } } });
+      await icon(win, target, '/rom/assets/status/wifi-' + Math.max(0, Math.min(3, Math.ceil(Number(network.Strength) * 3 / 100))) + '.png', 26, 36, ROW);
+      const detailWidth = mainWidth - 36 - SPACE.m;
+      const detail = await UI.createElement(win, { layout: { type: 'column', justifyContent: 'center' }, item: { size: { x: detailWidth, y: ROW } } });
       await UI.attach(win, target, detail);
-      await label(detail, network.name, 22, detailWidth, 32);
-      await label(detail, network.connected ? 'Connected' : network.saved ? 'Saved' : network.security === 'open' ? 'Open' : network.security === 'owe' ? 'Encrypted' : !network.supported ? 'Enterprise / WEP setup unavailable' : 'Password required', 15, detailWidth, 24, network.connected ? ORANGE : MUTED);
-      if (network.security !== 'open') await icon(win, target, '/rom/assets/power-menu/lock.png', 20, 20, 72);
+      await label(detail, network.name, TYPE.body + 1, detailWidth, 28);
+      await label(detail, network.connected ? 'Connected' : network.saved ? 'Saved' : network.security === 'open' ? 'Open' : network.security === 'owe' ? 'Encrypted' : !network.supported ? 'Enterprise / WEP setup unavailable' : 'Password required', TYPE.caption, detailWidth, 22, network.connected ? ORANGE : MUTED);
       if (network.connected) {
-        const disconnect = await button(win, row, 'Disconnect', 96, 72, () => backend.disconnect(), { ...GHOST, size: 15, labelColour: ORANGE });
+        const disconnect = await pill(win, row, 'Disconnect', 104, () => backend.disconnect(), { height: 40, labelColour: ORANGE });
         await UI.setElementId(win, disconnect, 'wifi-disconnect-' + network.path.split('/').pop());
       }
       if (network.saved) {
-        const forget = await button(win, row, 'Forget', 72, 72, () => backend.forget(network), { ...GHOST, size: 15 });
+        const forget = await pill(win, row, 'Forget', 80, () => backend.forget(network), { height: 40 });
         await UI.setElementId(win, forget, 'wifi-forget-' + network.path.split('/').pop());
       }
+      const lock = await UI.createElement(win, { layout: { type: 'row', justifyContent: 'center', alignItems: 'center' },
+        item: { size: { x: LOCK, y: ROW } }, onMouseClick: () => select(network) });
+      await UI.attach(win, row, lock);
+      if (network.security !== 'open') await icon(win, lock, '/rom/assets/power-menu/lock.png', 18, LOCK, ROW);
     }
-    const footer = await UI.createElement(win, { layout: { type: 'row', gap: 12 }, item: { size: { x: width, y: 64 } } });
+    const footer = await UI.createElement(win, { layout: { type: 'row', gap: SPACE.s, alignItems: 'center' }, item: { size: { x: width, y: TOUCH } } });
     await UI.attach(win, board, footer);
-    await button(win, footer, latest.scanning ? 'Scanning…' : 'Refresh', 152, 64, () => backend.scan(), { ...GHOST, labelColour: ORANGE });
-    if (latest.working) await button(win, footer, 'Cancel', 100, 64, () => backend.disconnect(), GHOST);
+    await pill(win, footer, latest.scanning ? 'Scanning…' : 'Refresh', 128, () => backend.scan(), { labelColour: ORANGE });
+    if (latest.working) await pill(win, footer, 'Cancel', 96, () => backend.disconnect());
     else if (pages > 1) {
-      await button(win, footer, '‹', 64, 64, () => { page = Math.max(0, page - 1); enqueue(paint); }, { ...GHOST, size: 30 });
-      await text(win, footer, (page + 1) + '/' + pages, 17, 64, 64, MUTED);
-      await button(win, footer, '›', 64, 64, () => { page = Math.min(pages - 1, page + 1); enqueue(paint); }, { ...GHOST, size: 30 });
+      await UI.attach(win, footer, await UI.createElement(win, { item: { size: { x: width - 128 - 64 * 2 - 64 - SPACE.s * 4, y: TOUCH } } }));
+      await button(win, footer, '', 64, TOUCH, () => { page = Math.max(0, page - 1); enqueue(paint); }, { ...GHOST, icon: glyph('previous'), iconSize: 22, radius: RADIUS.control });
+      await text(win, footer, (page + 1) + ' / ' + pages, TYPE.caption, 64, TOUCH, MUTED);
+      await button(win, footer, '', 64, TOUCH, () => { page = Math.min(pages - 1, page + 1); enqueue(paint); }, { ...GHOST, icon: glyph('next'), iconSize: 22, radius: RADIUS.control });
     }
     } finally { await Compositor.setWindowRenderingEnabled(win, true); }
   }

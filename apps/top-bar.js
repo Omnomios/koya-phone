@@ -3,7 +3,7 @@ import * as UI from 'Helix/UserInterface';
 import * as Log from 'Helix/Log';
 import { connect, call } from './session.js';
 import { suspendPolicy } from './suspend.js';
-import { FONT, BAR_HEIGHT, CREAM, ORANGE } from './theme.js';
+import { FONT, BAR_HEIGHT, CREAM, ORANGE, CLEAR, GUTTER } from './theme.js';
 import { icon, text, button } from './touch-ui.js';
 import { topBarStatus } from './status-model.js';
 import { createNotifications } from './notifications.js';
@@ -26,18 +26,17 @@ export default async (options = {}) => {
   const surface = await UI.createElement(win, { item: { size: { x: info.width, y: BAR_HEIGHT } } });
   await UI.attachRoot(win, surface);
   const root = await UI.createElement(win, {
-    layout: { type: 'row', justifyContent: 'start', alignItems: 'center', padding: { l: 20, r: 20, t: 0, b: 0 } },
+    layout: { type: 'row', justifyContent: 'start', alignItems: 'center', padding: { l: GUTTER, r: GUTTER - 4, t: 0, b: 0 } },
     item: { size: { x: info.width, y: BAR_HEIGHT } }
   });
   await UI.attach(win, surface, root);
   let displayed = formatTime();
   const clock = await UI.createElement(win, {
-    renderable: { type: 'text', string: displayed, size: 24, font: FONT, colour: CREAM },
-    item: { size: { x: 80, y: BAR_HEIGHT } }, contentAlign: { x: 'start', y: 'center' }
+    renderable: { type: 'text', string: displayed, size: 21, font: FONT, colour: CREAM, justify: 'left', vAlign: 'center', metricsBasis: 'line' },
+    item: { size: { x: 64, y: BAR_HEIGHT } }, contentAlign: { x: 'start', y: 'center' }
   });
   await UI.attach(win, root, clock);
   await UI.setElementId(win, clock, 'top-bar-clock');
-  await UI.setTextVerticalAlign(win, clock, 'center');
   let bell, bellButton, unread = false, hasNotifications = false;
   const notifications = createNotifications(displays[0], (count, total) => {
     const nextUnread = count > 0, nextVisible = total > 0;
@@ -52,7 +51,7 @@ export default async (options = {}) => {
   const volume = createVolume(displays[0], options.volume);
   const sleep = suspendPolicy(() => call('Suspend'), message => Log.error(message));
   bellButton = await button(win, root, '', 44, BAR_HEIGHT, () => notifications.open(), {
-    colour: [0, 0, 0, 0], icon: '/rom/assets/launcher/bell.png', iconSize: 22,
+    colour: CLEAR, icon: '/rom/assets/launcher/bell.png', iconSize: 20,
     onIcon: value => { bell = value; }
   });
   await UI.setEnabled(win, bellButton, false);

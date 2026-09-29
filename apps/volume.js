@@ -4,7 +4,7 @@ import { pulseAudio } from './pulse-audio.js';
 import { notificationSurface } from './notification-surface.js';
 import { clips } from './motion.js';
 import { icon, text } from './touch-ui.js';
-import { CREAM, ORANGE, INK, BAR_HEIGHT, NAV_HEIGHT } from './theme.js';
+import { CREAM, ORANGE, INK, TRACK, alpha, BAR_HEIGHT, NAV_HEIGHT, TYPE, RADIUS } from './theme.js';
 import { haptic } from './haptics.js';
 
 export function createVolume(display, options = {}) {
@@ -30,14 +30,14 @@ export function createVolume(display, options = {}) {
     const usable = Math.max(0, size.y - BAR_HEIGHT - NAV_HEIGHT - hudSize.y);
     const offset = { x: right ? size.x - margin - hudSize.x : margin,
       y: BAR_HEIGHT + usable * (state.VolumeIndicatorPositionPercent ?? 50) / 100 };
-    surface = await notificationSurface(display, 'koya-volume', hudSize, offset, [...INK.slice(0, 3), 0.98], 'none',
+    surface = await notificationSurface(display, 'koya-volume', hudSize, offset, alpha(INK, 0.98), 'none',
       { pointerEvents: false, enterOffset: { x: right ? 16 : -16, y: 0 } });
     const win = surface.win;
     const column = await UI.createElement(win, { layout: { type: 'column', gap: 12, padding: { l: 12, r: 12, t: 16, b: 16 }, alignItems: 'center' }, item: { size: hudSize } });
     await UI.attach(win, surface.root, column);
     glyph = await icon(win, column, texture('volume'), 28, 48, 32);
     const track = await UI.createElement(win, {
-      renderable: { type: 'box', colour: [0.2, 0.3, 0.25, 1], cornerRadius: 16, cornerResolution: 16, origin: { x: 0.5, y: 0.5 } },
+      renderable: { type: 'box', colour: TRACK, cornerRadius: RADIUS.control, cornerResolution: 16, origin: { x: 0.5, y: 0.5 } },
       clipToBounds: true, clipToMask: true,
       item: { size: { x: 32, y: 160 } }, contentAlign: 'fill'
     });
@@ -49,7 +49,7 @@ export function createVolume(display, options = {}) {
     });
     await UI.attach(win, track, fill);
     await UI.setElementId(win, fill, 'volume-level');
-    label = await text(win, column, '—', 18, 48, 28, CREAM);
+    label = await text(win, column, '—', TYPE.caption + 1, 48, 28, CREAM);
     await UI.setElementId(win, label, 'volume-percent');
     motion = await clips(win, track, { change: [
       { time: 0.06, scale: { x: 1.08, y: 1 }, ease: 'outQuad' },

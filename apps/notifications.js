@@ -9,21 +9,23 @@ import { Notifications } from './notifications-model.js';
 import { notificationSurface } from './notification-surface.js';
 import { createBrightness } from './brightness.js';
 import { haptic } from './haptics.js';
-import { button, icon, text } from './touch-ui.js';
+import { button, icon, text, label, row, pill, backdrop, sheetHeader } from './touch-ui.js';
 import { clips } from './motion.js';
 import { call } from './session.js';
 import { decodeDesktop, nextDesktop } from './desktop-model.js';
-import { FONT, CREAM, ORANGE, INK, BAR_HEIGHT, NAV_HEIGHT } from './theme.js';
+import { CREAM, ORANGE, INK, CARD, MUTED, CLEAR, alpha, BAR_HEIGHT, GUTTER, SPACE, RADIUS, TYPE, HEADER_HEIGHT, TOUCH, TRAILING_INSET } from './theme.js';
 
-const GHOST = { colour: [0, 0, 0, 0] };
-const MUTED = [0.66, 0.72, 0.66, 1];
-const CARD = [0.095, 0.18, 0.14, 1];
+const GHOST = { colour: CLEAR };
+// Notification card anatomy. Heights derive from content so short
+// notifications do not carry empty space.
+const CARD_PAD = 16, CARD_HEADER = 32, CARD_SUMMARY = 28, CARD_LINE = 24, CARD_BODY = 2 * CARD_LINE, ACTION = 40, TILE = 72;
+const BANNER_HEIGHT = CARD_PAD * 2 + CARD_HEADER + CARD_SUMMARY + CARD_BODY + SPACE.xs * 2;
 const shellIcon = name => '/rom/assets/launcher/' + name + '.png';
 const preview = (value, limit) => value.length > limit ? value.slice(0, limit - 1).trimEnd() + '…' : value;
 
 export function createNotifications(display, onUnread = () => {}) {
   const size = { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) };
-  const width = size.x - 40;
+  const width = size.x - 2 * GUTTER;
   let state = {}, center, toast, centerBoard, toastBoard, apps = [], connected = false;
   let requested = false, page = 0, banner, bannerTimer, bannerKey, centerKey, pendingBanner;
   const icons = new Map(); let iconVersion = 0;
@@ -62,18 +64,16 @@ export function createNotifications(display, onUnread = () => {}) {
       model.invoke(item.id, 'default'); closeCenter(); endBanner();
     } else openCenter();
   };
-  const label = async (win, parent, value, fontSize, w, h, colour = CREAM) => {
-    const node = await UI.createElement(win, {
-      renderable: { type: 'text', string: value, size: fontSize, font: FONT, colour, layoutMode: 'word-wrap' },
-      item: { size: { x: w, y: h } }, contentAlign: { x: 'start', y: 'center' }, clipToBounds: true
-    });
-    await UI.attach(win, parent, node);
-    await UI.setTextVerticalAlign(win, node, 'center');
-    return node;
-  };
   const appIcon = item => icons.get(item.icon) || apps.find(app => app.id === item.desktop + '.desktop' || app.id === item.desktop || app.name === item.app)?.icon || shellIcon('bell');
   const actionsFor = item => item.active ? item.actions.filter(action => action.key !== 'default') : [];
-  const heightFor = item => 204 + Math.ceil(actionsFor(item).length / 2) * 56;
+  const bodyOf = item => item.body.replace(/\s+/g, ' ').trim();
+  const actionRows = item => Math.ceil(actionsFor(item).length / 2);
+  // Tappable text region: below the header row, above any action buttons.
+  // Source Sans averages about half an em per character: one or two lines.
+  const bodyHeight = item => !bodyOf(item) ? 0 : preview(bodyOf(item), 110).length * (TYPE.caption + 1) * 0.5 > width - 2 * CARD_PAD ? CARD_BODY : CARD_LINE;
+  const textEnd = item => CARD_PAD + CARD_HEADER + SPACE.xs + CARD_SUMMARY + (bodyOf(item) ? SPACE.xs + bodyHeight(item) : 0);
+  const heightFor = item => textEnd(item) + CARD_PAD
+    + (actionRows(item) ? SPACE.s + actionRows(item) * ACTION + (actionRows(item) - 1) * SPACE.s : 0);
   let openingWifi = false;
   const openWifi = async () => {
     if (!unlocked() || openingWifi) return;
@@ -88,16 +88,17 @@ export function createNotifications(display, onUnread = () => {}) {
     finally { openingWifi = false; }
   };
   const card = async (surface, parent, item, w, compact) => {
-    const win = surface.win, height = compact ? 184 : heightFor(item);
+    const win = surface.win, height = compact ? BANNER_HEIGHT : heightFor(item), end = textEnd(item);
     let motion;
+    const inText = point => point.y >= CARD_PAD + CARD_HEADER && point.y < end;
     const node = await UI.createElement(win, {
-      renderable: { type: 'box', colour: compact ? [0, 0, 0, 0] : CARD, cornerRadius: 18, origin: { x: 0.5, y: 0.5 } },
-      layout: { type: 'column', gap: 8, padding: { l: 16, r: 16, t: 12, b: 12 } },
+      renderable: { type: 'box', colour: compact ? CLEAR : CARD, cornerRadius: RADIUS.surface, cornerResolution: 16, origin: { x: 0.5, y: 0.5 } },
+      layout: { type: 'column', gap: SPACE.xs, padding: { l: CARD_PAD, r: TRAILING_INSET - 20, t: CARD_PAD, b: CARD_PAD } },
       item: { size: { x: w, y: height } }, inheritAnimation: true, contentAlign: 'fill',
-      onMouseDown: (_, point) => { if (point.y >= 56 && point.y < 172 && unlocked()) { haptic(); motion?.play('press'); } },
+      onMouseDown: (_, point) => { if (inText(point) && unlocked()) { haptic(); motion?.play('press'); } },
       onMouseUp: () => motion?.play('release'),
       onMouseExit: () => motion?.play('release'),
-      onMouseClick: (_, point) => { if (point.y >= 56 && point.y < 172 && unlocked()) activate(item); }
+      onMouseClick: (_, point) => { if (inText(point) && unlocked()) activate(item); }
     });
     await UI.attach(win, parent, node);
     await UI.setElementId(win, node, 'notification-' + item.id);
@@ -106,38 +107,45 @@ export function createNotifications(display, onUnread = () => {}) {
       release: [{ time: 0.10, scale: { x: 1.008, y: 1.008 }, ease: 'outCubic' },
         { time: 0.23, scale: { x: 1, y: 1 }, ease: 'outCubic' }]
     });
-    const inner = w - 32;
-    const header = await UI.createElement(win, { layout: { type: 'row', gap: 8, alignItems: 'center' }, item: { size: { x: inner, y: 44 } } });
+    const inner = w - CARD_PAD - (TRAILING_INSET - 20), text = w - 2 * CARD_PAD;
+    const header = await UI.createElement(win, { layout: { type: 'row', gap: SPACE.s, alignItems: 'center' }, item: { size: { x: inner, y: CARD_HEADER } } });
     await UI.attach(win, node, header);
-    await icon(win, header, appIcon(item), 28, 32, 44);
-    await label(win, header, preview(item.app, 32), 15, inner - 96, 44, item.urgency === 2 ? ORANGE : MUTED);
-    await button(win, header, '', 48, 44, () => unlocked() && dismiss(item.id), { ...GHOST, icon: shellIcon('close'), iconSize: 19 });
-    await label(win, node, preview(item.summary || item.app, compact ? 42 : 80), 22, inner, compact ? 32 : 52);
-    await label(win, node, preview(item.body.replace(/\s+/g, ' '), 110), 18, inner, 44);
-    if (!compact) {
+    await icon(win, header, appIcon(item), 20, 20, CARD_HEADER);
+    await label(win, header, preview(item.app, 32), TYPE.caption, inner - 20 - SPACE.s * 2 - 40, CARD_HEADER, item.urgency === 2 ? ORANGE : MUTED);
+    await button(win, header, '', 40, CARD_HEADER, () => unlocked() && dismiss(item.id), { ...GHOST, icon: shellIcon('close'), iconSize: 16, radius: RADIUS.control });
+    await label(win, node, preview(item.summary || item.app, compact ? 42 : 80), TYPE.heading - 1, text, CARD_SUMMARY);
+    if (bodyOf(item) || compact) await label(win, node, preview(bodyOf(item), 110), TYPE.caption + 1, text, compact ? CARD_BODY : bodyHeight(item), alpha(CREAM, 0.82));
+    if (!compact && actionRows(item)) {
       const actions = actionsFor(item);
+      const list = await UI.createElement(win, { layout: { type: 'column', gap: SPACE.s, padding: { l: 0, r: 0, t: SPACE.xs, b: 0 } },
+        item: { size: { x: text, y: SPACE.xs + actionRows(item) * ACTION + (actionRows(item) - 1) * SPACE.s } } });
+      await UI.attach(win, node, list);
       for (let i = 0; i < actions.length; i += 2) {
-        const row = await UI.createElement(win, { layout: { type: 'row', gap: 12 }, item: { size: { x: inner, y: 48 } } });
-        await UI.attach(win, node, row);
-        for (const action of actions.slice(i, i + 2)) await button(win, row, preview(action.label, 26), (inner - 12) / 2, 48,
+        const line = await UI.createElement(win, { layout: { type: 'row', gap: SPACE.s }, item: { size: { x: text, y: ACTION } } });
+        await UI.attach(win, list, line);
+        for (const action of actions.slice(i, i + 2)) await pill(win, line, preview(action.label, 26), (text - SPACE.s) / 2,
           () => { if (unlocked()) { model.invoke(item.id, action.key); closeCenter(); endBanner(); } },
-          { ...GHOST, size: 18, labelColour: ORANGE, labelHeight: 42 });
+          { height: ACTION, labelColour: ORANGE });
       }
     }
   };
   const pages = () => {
     const result = [[]]; let used = 0;
-    const available = size.y - BAR_HEIGHT - NAV_HEIGHT - 360;
+    const available = listHeight() + SPACE.m;
     for (const item of model.items.filter(item => !item.transient)) {
-      const height = heightFor(item) + 12;
+      const height = heightFor(item) + SPACE.m;
       if (used && used + height > available) { result.push([]); used = 0; }
       result[result.length - 1].push(item); used += height;
     }
     return result;
   };
+  // The shade covers both bars. Keep the top bar's strip clear for the notch.
+  const TOP = BAR_HEIGHT + SPACE.s;
+  const listHeight = () => size.y - TOP - GUTTER - HEADER_HEIGHT - 2 * TILE - 4 * SPACE.m - TOUCH;
   const buildCenter = async () => {
-    center = await notificationSurface(display, 'koya-notifications', size, { x: 0, y: 0 }, [...INK.slice(0, 3), 0.98], 'exclusive');
+    center = await notificationSurface(display, 'koya-notifications', size, { x: 0, y: 0 }, alpha(INK, 0.98), 'exclusive');
     await UI.setElementId(center.win, center.root, 'notifications-root');
+    await backdrop(center.win, center.root, size);
     await center.prepare();
   };
   const paintCenter = async () => {
@@ -148,30 +156,38 @@ export function createNotifications(display, onUnread = () => {}) {
     await center.paint(async () => {
       if (centerBoard) await UI.destroyElement(center.win, centerBoard);
       const win = center.win;
-      centerBoard = await UI.createElement(win, { layout: { type: 'column', gap: 12, padding: { l: 20, r: 20, t: BAR_HEIGHT + 12, b: NAV_HEIGHT + 12 } }, item: { size } });
+      centerBoard = await UI.createElement(win, { layout: { type: 'column', gap: SPACE.m, padding: { l: GUTTER, r: GUTTER, t: TOP, b: GUTTER } }, item: { size } });
       await UI.attach(win, center.root, centerBoard);
-      const header = await UI.createElement(win, { layout: { type: 'row', gap: 8 }, item: { size: { x: width, y: 56 } } });
-      await UI.attach(win, centerBoard, header);
-      await label(win, header, 'Notifications', 28, width - 120, 56);
-      await button(win, header, '', 52, 56, () => unlocked() && model.clear(), { ...GHOST, icon: shellIcon('clear'), iconSize: 24 });
-      await button(win, header, '', 52, 56, closeCenter, { ...GHOST, icon: shellIcon('close'), iconSize: 24 });
+      const items = groups[page];
+      await sheetHeader(win, centerBoard, 'Notifications', width, [
+        ...(model.records.size ? [{ icon: shellIcon('clear'), handler: () => unlocked() && model.clear() }] : []),
+        { icon: shellIcon('close'), handler: closeCenter }
+      ]);
       await brightness.attach(win, centerBoard, width);
-      const wifi = await button(win, centerBoard, state.WifiState === 'connected' && state.WifiSsid ? 'Wi-Fi · ' + preview(state.WifiSsid, 28) : 'Wi-Fi', width, 72,
-        openWifi, { colour: CARD, labelHeight: 48, size: 22 });
+      // Quick settings share one row anatomy: icon column, title and status.
+      const connected = state.WifiState === 'connected' && state.WifiSsid;
+      const wifi = await row(win, centerBoard, width, TILE, openWifi, { right: TRAILING_INSET - 20 });
       await UI.setElementId(win, wifi, 'notifications-wifi');
-      const list = await UI.createElement(win, { layout: { type: 'column', gap: 12 }, item: { size: { x: width, y: size.y - BAR_HEIGHT - NAV_HEIGHT - 372 } } });
+      await icon(win, wifi, '/rom/assets/status/' + (connected ? 'wifi-3' : 'wifi-off') + '.png', 26, 36, TILE);
+      const detail = await UI.createElement(win, { layout: { type: 'column', justifyContent: 'center' }, item: { size: { x: width - 16 - 36 - 12 * 2 - 40 - (TRAILING_INSET - 20), y: TILE } } });
+      await UI.attach(win, wifi, detail);
+      await label(win, detail, 'Wi-Fi', TYPE.body, width - 120, 26);
+      await label(win, detail, connected ? preview(state.WifiSsid, 32) : state.WifiState === 'connecting' ? 'Connecting…' : 'Not connected', TYPE.caption, width - 120, 22, connected ? ORANGE : MUTED);
+      await icon(win, wifi, shellIcon('next'), 18, 40, TILE);
+      const list = await UI.createElement(win, { layout: { type: 'column', gap: SPACE.m }, item: { size: { x: width, y: listHeight() } } });
       await UI.attach(win, centerBoard, list);
-      if (!groups[page].length) {
-        await icon(win, list, shellIcon('bell'), 60, width, 140);
-        await text(win, list, 'All caught up', 24, width, 48, CREAM);
+      if (!items.length) {
+        await UI.attach(win, list, await UI.createElement(win, { item: { size: { x: width, y: Math.max(0, listHeight() / 2 - 110) } } }));
+        await icon(win, list, shellIcon('bell'), 48, width, 72);
+        await text(win, list, 'All caught up', TYPE.body, width, 32, MUTED);
       }
-      for (const item of groups[page]) await card(center, list, item, width, false);
+      for (const item of items) await card(center, list, item, width, false);
       if (groups.length > 1) {
-        const footer = await UI.createElement(win, { layout: { type: 'row', justifyContent: 'center', gap: 16 }, item: { size: { x: width, y: 56 } } });
+        const footer = await UI.createElement(win, { layout: { type: 'row', justifyContent: 'center', alignItems: 'center' }, item: { size: { x: width, y: TOUCH } } });
         await UI.attach(win, centerBoard, footer);
-        await button(win, footer, '‹', 64, 56, () => { if (page > 0) { page--; enqueue(paintCenter); } }, { ...GHOST, size: 30 });
-        await text(win, footer, (page + 1) + ' / ' + groups.length, 17, 80, 56, MUTED);
-        await button(win, footer, '›', 64, 56, () => { if (page + 1 < groups.length) { page++; enqueue(paintCenter); } }, { ...GHOST, size: 30 });
+        await button(win, footer, '', 64, TOUCH, () => { if (page > 0) { page--; enqueue(paintCenter); } }, { ...GHOST, icon: shellIcon('previous'), iconSize: 22, radius: RADIUS.control });
+        await text(win, footer, (page + 1) + ' / ' + groups.length, TYPE.caption, 80, TOUCH, MUTED);
+        await button(win, footer, '', 64, TOUCH, () => { if (page + 1 < groups.length) { page++; enqueue(paintCenter); } }, { ...GHOST, icon: shellIcon('next'), iconSize: 22, radius: RADIUS.control });
       }
     });
   };
@@ -182,8 +198,8 @@ export function createNotifications(display, onUnread = () => {}) {
   const showBanner = async item => {
     if (!toast || toast.closed) {
       toastBoard = undefined;
-      toast = await notificationSurface(display, 'koya-notification-banner', { x: width, y: 184 },
-        { x: 20, y: BAR_HEIGHT + 12 }, CARD);
+      toast = await notificationSurface(display, 'koya-notification-banner', { x: width, y: BANNER_HEIGHT },
+        { x: GUTTER, y: BAR_HEIGHT + SPACE.s }, CARD);
       await toast.prepare();
     }
     const key = item.id + ':' + item.revision + ':' + iconVersion;
@@ -192,7 +208,7 @@ export function createNotifications(display, onUnread = () => {}) {
       bannerKey = key;
       await toast.paint(async () => {
         if (toastBoard) await UI.destroyElement(toast.win, toastBoard);
-        toastBoard = await UI.createElement(toast.win, { item: { size: { x: width, y: 184 } } });
+        toastBoard = await UI.createElement(toast.win, { item: { size: { x: width, y: BANNER_HEIGHT } } });
         await UI.attach(toast.win, toast.root, toastBoard);
         await card(toast, toastBoard, item, width, true);
       });

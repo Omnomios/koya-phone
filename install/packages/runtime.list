@@ -24,6 +24,7 @@ feedbackd-device-themes
 gdk-pixbuf
 librsvg
 hicolor-icon-theme
+font-source-sans
 libnotify
 pulseaudio
 pulseaudio-utils

@@ -4,7 +4,7 @@ import * as Log from 'Helix/Log';
 import { call } from './session.js';
 import { icon, text } from './touch-ui.js';
 import { haptic } from './haptics.js';
-import { CREAM, ORANGE } from './theme.js';
+import { CREAM, ORANGE, CARD, TRACK, RADIUS, TYPE } from './theme.js';
 
 export function createBrightness(allowed) {
   let state = {}, value = { Available: false, Percent: -1 }, target, writing = false, reading = false, dragging = false;
@@ -69,13 +69,13 @@ export function createBrightness(allowed) {
     attach: async (win, parent, width) => {
       ++generation; binding = undefined; painted = undefined;
       const card = await UI.createElement(win, {
-        renderable: { type: 'box', colour: [0.095, 0.18, 0.14, 1], cornerRadius: 18, cornerResolution: 16 },
-        layout: { type: 'row', gap: 12, padding: { l: 16, r: 16, t: 16, b: 16 }, alignItems: 'center' },
-        item: { size: { x: width, y: 104 } }, contentAlign: 'fill'
+        renderable: { type: 'box', colour: CARD, cornerRadius: RADIUS.surface, cornerResolution: 16 },
+        layout: { type: 'row', gap: 12, padding: { l: 16, r: 8, t: 0, b: 0 }, alignItems: 'center' },
+        item: { size: { x: width, y: 72 } }, contentAlign: 'fill'
       });
       await UI.attach(win, parent, card);
-      await icon(win, card, '/rom/assets/status/brightness.png', 28, 36, 72);
-      const sliderWidth = width - 32 - 36 - 24 - 60, travel = sliderWidth - 28;
+      await icon(win, card, '/rom/assets/status/brightness.png', 26, 36, 72);
+      const sliderWidth = width - 24 - 36 - 24 - 52, travel = sliderWidth - 28;
       const seek = point => setPercent((point.x - 14) / travel * 100);
       const slider = await UI.createElement(win, {
         renderable: { type: 'box', colour: [0, 0, 0, 0] }, item: { size: { x: sliderWidth, y: 72 } }, contentAlign: 'fill',
@@ -92,13 +92,13 @@ export function createBrightness(allowed) {
       });
       await UI.attach(win, slider, rail);
       const track = await UI.createElement(win, {
-        renderable: { type: 'box', colour: [0.2, 0.3, 0.25, 1], cornerRadius: 6, cornerResolution: 16 },
-        clipToBounds: true, clipToMask: true, item: { size: { x: travel, y: 12 } }, contentAlign: 'fill'
+        renderable: { type: 'box', colour: TRACK, cornerRadius: 1, cornerResolution: 16 },
+        clipToBounds: true, clipToMask: true, item: { size: { x: travel, y: 6 } }, contentAlign: 'fill'
       });
       await UI.attach(win, rail, track);
       const fill = await UI.createElement(win, {
         renderable: { type: 'box', colour: ORANGE, origin: { x: 0, y: 0.5 }, scale: { x: 0, y: 1 } },
-        item: { size: { x: travel, y: 12 } }, contentAlign: 'fill'
+        item: { size: { x: travel, y: 6 } }, contentAlign: 'fill'
       });
       await UI.attach(win, track, fill);
       // A flow container gives the thumb a real 28px slot. Children of a
@@ -109,12 +109,12 @@ export function createBrightness(allowed) {
       });
       await UI.attach(win, slider, thumbRail);
       const thumb = await UI.createElement(win, {
-        renderable: { type: 'box', colour: CREAM, cornerRadius: 14, cornerResolution: 16 },
+        renderable: { type: 'box', colour: CREAM, cornerRadius: RADIUS.control, cornerResolution: 16 },
         item: { size: { x: 28, y: 28 } }, contentAlign: 'fill'
       });
       await UI.attach(win, thumbRail, thumb);
       await UI.setElementId(win, thumb, 'brightness-thumb');
-      const label = await text(win, card, '—', 18, 60, 72);
+      const label = await text(win, card, '—', TYPE.caption + 1, 52, 72);
       await UI.setElementId(win, label, 'brightness-percent');
       binding = { win, slider, fill, thumb, label, travel }; await paint();
     }
