@@ -6,7 +6,7 @@ if [[ ${1:-} != --inside ]]; then
   build=$(realpath -- "${2:?Build directory required}")
   runtime=$(mktemp -d /tmp/koya-test.XXXXXX)
   trap 'rm -rf -- "$runtime"' EXIT
-  export XDG_RUNTIME_DIR=$runtime XDG_STATE_HOME=$runtime XDG_CACHE_HOME=$runtime XDG_DATA_HOME=$runtime
+  export XDG_RUNTIME_DIR=$runtime XDG_CONFIG_HOME=$runtime/config XDG_STATE_HOME=$runtime XDG_CACHE_HOME=$runtime XDG_DATA_HOME=$runtime
   unset WAYLAND_DISPLAY
   export KOYA_TEST_BUILD=$build KOYA_TEST_ROOT=$root KOYA_TEST_FAILURE=$runtime/failure
   export KOYA_TEST_APP_ROOT=$runtime/application

@@ -68,7 +68,9 @@ volume, brightness and vibration. Display settings are in
 `/etc/koya-shell/hyprland.conf`. See the [user guide](user-guide.md#settings) for
 settings and defaults.
 
-After editing settings, save your work and restart the graphical session:
+Use **Settings** in the app launcher for wallpaper and shell preferences; those
+changes apply immediately. After manually editing config files, save your work
+and restart the graphical session:
 
 ```sh
 sudo rc-service tinydm restart

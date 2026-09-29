@@ -154,6 +154,7 @@ set -euo pipefail
 exec "$KOYA_DEV_KOYA" -n "$KOYA_DEV_PLUGINS" -m "$KOYA_DEV_ASSETS" -m "$KOYA_DEV_SOURCE" \
     -m "$KOYA_DEV_CHECKOUT" -i apps/wifi.js
 WRAPPER
+    sed 's|apps/wifi.js|apps/settings.js|' "$run/wifi.sh" >"$run/settings.sh"
     printf '#!/usr/bin/env bash\nexec bash %q --shell\n' "$script" >"$run/shell.sh"
     printf '#!/usr/bin/env bash\nexec bash %q --control "$1"\n' "$script" >"$run/control.sh"
     chmod +x "$run/"*.sh
@@ -163,6 +164,14 @@ Name=Wi-Fi
 Type=Application
 Exec=$run/wifi.sh
 Icon=network-wireless
+DESKTOP
+    cat >"$run/data/applications/koya-settings.desktop" <<DESKTOP
+[Desktop Entry]
+Name=Settings
+Type=Application
+Exec=$run/settings.sh
+Icon=koya-settings
+StartupWMClass=org.koya.Settings
 DESKTOP
     config=$run/hyprland.conf
     # Translate the phone's 0.51 rules for the development compositor's 0.54 syntax.

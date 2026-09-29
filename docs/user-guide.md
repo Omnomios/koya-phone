@@ -8,6 +8,7 @@
 | Return home | Tap **Home** |
 | Switch or close an app | Tap **Desktops** |
 | Show or hide the keyboard | Tap the keyboard button |
+| Change wallpaper or shell preferences | Open **Settings** from **Apps** |
 | Open notifications and brightness controls | Tap the top bar or swipe down from it |
 | Switch the screen off or wake it | Press the power button briefly |
 | Open Power off, Restart and Lock | Hold the power button |
@@ -50,11 +51,22 @@ screen. Notification history is cleared when the shell restarts.
 
 ## Settings
 
-Edit `~/.local/share/koya-shell/current/session.conf`. If you installed with a
-custom `--prefix`, use that directory's `current/session.conf` instead.
+Open **Settings** from the app launcher. Choose **Wallpaper** for the four bundled
+wallpapers; tap a preview to apply it to the home screen, swipe screen and shell
+panel backgrounds. The selected wallpaper is marked **Selected**.
 
-Restart the graphical session to apply changes. This closes the current session,
-so save your work first:
+**Screen & sleep** controls screen timeouts and minimum brightness. **Volume &
+vibration** controls touch feedback, volume buttons and the volume indicator.
+Tap a setting to choose a value, or use its switch. All changes apply immediately
+and are saved automatically; no session restart is needed.
+
+Preferences are saved in `~/.config/koya-shell/settings.conf` (or under
+`$XDG_CONFIG_HOME` when set). They override `current/session.conf` and survive
+shell restarts and installation upgrades. The tables below show the base defaults.
+Advanced options, including the audio output name, remain available in
+`~/.local/share/koya-shell/current/session.conf`. If you installed with a custom
+`--prefix`, use that directory's `current/session.conf` instead. Restart the
+session after editing config files manually, and save your work first:
 
 ```sh
 sudo rc-service tinydm restart

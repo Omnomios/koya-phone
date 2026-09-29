@@ -2,6 +2,7 @@ import { session as Bus } from 'Module/dbus';
 import * as Log from 'Helix/Log';
 import * as Engine from 'Helix/Engine';
 import { configureHaptics } from './haptics.js';
+import { configureWallpaper } from './wallpaper-surface.js';
 
 const NAME = 'org.koya.Shell1';
 const PATH = '/org/koya/Shell1';
@@ -23,7 +24,7 @@ export function connect(component, onState = () => {}, onDesktop = () => {}, onA
           do {
             dirty = false;
             const state = await call('GetState');
-            configureHaptics(state); await onState(state);
+            configureHaptics(state); await configureWallpaper(state); await onState(state);
           } while (dirty);
         } finally { refreshing = false; }
       };
@@ -45,7 +46,7 @@ export function connect(component, onState = () => {}, onDesktop = () => {}, onA
           const state = event.args?.[0];
           if ((component === 'navigation' || component === 'top-bar') && typeof state?.Active === 'boolean') {
             configureHaptics(state);
-            Promise.resolve(onState(state)).catch(error => Log.error('Shell state: ' + error));
+            configureWallpaper(state).then(() => onState(state)).catch(error => Log.error('Shell state: ' + error));
           } else refresh().catch(error => Log.error('Shell state: ' + error));
         }
         if (event.interface === 'org.freedesktop.DBus' && event.member === 'NameOwnerChanged' && event.args?.[0] === NAME) {
@@ -60,7 +61,7 @@ export function connect(component, onState = () => {}, onDesktop = () => {}, onA
       await Bus.addMatch("type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0='org.koya.Shell1'");
       await onConnected();
       await refresh();
-      await call('Ready', 's', component);
+      if (component !== 'settings') await call('Ready', 's', component);
     } catch (error) {
       Log.error(component + ': D-Bus setup failed: ' + error);
       Engine.quit();

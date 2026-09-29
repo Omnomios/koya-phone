@@ -30,7 +30,8 @@ export const SHEET_TINT = [0.15, 0.19, 0.17, 1];
 export const SPACE = { xs: 4, s: 8, m: 12, l: 16, xl: 24 };
 export const GUTTER = 20;
 // Tight, consistent corners: controls (buttons, fields, rows, switches) and
-// surfaces (cards, banners, panels). Only the on/off switch is fully round.
+// surfaces (cards, banners, panels). Only grabbable handles are fully round:
+// the on/off switch and the brightness slider thumb.
 export const RADIUS = { control: 4, surface: 6 };
 // Text sizes: sheet titles, row titles, body copy and secondary captions.
 export const TYPE = { display: 88, title: 30, heading: 21, body: 18, caption: 15 };

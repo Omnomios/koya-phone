@@ -85,7 +85,9 @@ grep -Fxq 'windowrule = fullscreen_state 1 0, match:class .*' "$3"
 grep -q 'F5, exec,' "$3"
 grep -q 'F12, exit,' "$3"
 grep -q 'suspend-seconds=0' "$KOYA_DEV_SOURCE/session.conf"
-bash -n "$KOYA_DEV_RUN/component.sh" "$KOYA_DEV_RUN/wifi.sh" "$KOYA_DEV_RUN/shell.sh" "$KOYA_DEV_RUN/control.sh"
+bash -n "$KOYA_DEV_RUN/component.sh" "$KOYA_DEV_RUN/wifi.sh" "$KOYA_DEV_RUN/settings.sh" "$KOYA_DEV_RUN/shell.sh" "$KOYA_DEV_RUN/control.sh"
+grep -q 'apps/settings.js' "$KOYA_DEV_RUN/settings.sh"
+grep -q "Exec=$KOYA_DEV_RUN/settings.sh" "$XDG_DATA_HOME/applications/koya-settings.desktop"
 printf '%s\n' "$KOYA_DEV_RUN" >"$KOYA_DEV_AUDIT"
 exit 42
 STUB

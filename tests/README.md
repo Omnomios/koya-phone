@@ -31,8 +31,9 @@ KOYA_BIN=/path/to/installed/koya bash tests/run.sh session build
 ```
 
 The suite covers session ownership and cleanup, button and lock policy,
-keyboard supervision, battery/network status, Wi-Fi backend operations, and
-display/idle/desktop behavior. Both bus addresses point to a private test daemon;
+keyboard supervision, battery/network status, Wi-Fi backend operations,
+display/idle/desktop behavior, and shell preferences (validation, live changes,
+persistence and failed writes). Both bus addresses point to a private test daemon;
 power, network, keyboard, battery, and compositor behavior use local fixtures.
 
 The existing `capture-*.js` scripts exercise rendered UI separately and require

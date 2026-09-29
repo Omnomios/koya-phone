@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Settings
+Exec=/home/user/koya-shell/scripts/run-settings.sh
+TryExec=koya
+Icon=koya-settings
+StartupWMClass=org.koya.Settings
+Terminal=false
+Categories=Settings;

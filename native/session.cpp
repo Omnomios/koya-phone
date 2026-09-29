@@ -24,12 +24,14 @@
 #include "keyboard.hpp"
 #include "notification-transport.hpp"
 #include "backlight.hpp"
+#include "settings.hpp"
 
 static constexpr const char *BUS = "org.koya.Shell1", *PATH = "/org/koya/Shell1";
 static constexpr const char *LOGIN = "org.freedesktop.login1", *LOGIN_PATH = "/org/freedesktop/login1";
 static constexpr const char *MANAGER = "org.freedesktop.login1.Manager";
 static const char XML[] = R"XML(<node><interface name="org.koya.Shell1">
  <method name="GetState"><arg name="state" type="a{sv}" direction="out"/></method>
+ <method name="SetSetting"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="out"/></method>
  <method name="DesktopViewVisible"><arg type="b" direction="in"/></method>
  <method name="ShowPowerMenu"/><method name="DismissPowerMenu"/>
  <method name="PowerOff"/><method name="Reboot"/>
@@ -136,6 +138,7 @@ class Session {
     std::string volume_side = "left", volume_sink;
     bool haptics_enabled = true;
     unsigned haptics_interval = 45, brightness_minimum = 5;
+    std::string wallpaper_id = "earthy-green";
     int lock_fd = -1, display_fd = -1;
     udev *udev_context{};
     udev_monitor *monitor{};
@@ -222,6 +225,7 @@ class Session {
         g_variant_builder_add(&b, "{sv}", "HapticsEnabled", g_variant_new_boolean(haptics_enabled));
         g_variant_builder_add(&b, "{sv}", "HapticsMinIntervalMs", g_variant_new_uint32(haptics_interval));
         g_variant_builder_add(&b, "{sv}", "BrightnessMinPercent", g_variant_new_uint32(brightness_minimum));
+        s("Wallpaper", wallpaper_id);
         s("LastError", error);
         s("CanPowerOff", power_cap);
         s("CanReboot", reboot_cap);
@@ -529,13 +533,85 @@ class Session {
                 c.kill_timer = g_timeout_add_seconds(2, [](gpointer p)->gboolean{auto&c = *static_cast<Component*>(p); c.kill_timer = 0; if (c.process)g_subprocess_force_exit(c.process); return G_SOURCE_REMOVE;}, &c);
         }
     }
+    void set_setting(GDBusMethodInvocation *invocation, const char *name, const char *value) {
+        if (!active || screen != "unlocked" || stopping || pending || preparing_sleep) {
+            fail(invocation, "Settings require an active unlocked session"); return;
+        }
+        struct Setting {
+            const char *name, *group, *key;
+            unsigned *number; bool *boolean;
+            unsigned low, high;
+        };
+        const Setting settings[] = {
+            {"IdleLockSeconds", "idle", "lock-seconds", &idle_lock_seconds, nullptr, 0, 86400},
+            {"IdleScreenSeconds", "idle", "lock-screen-seconds", &idle_screen_seconds, nullptr, 0, 86400},
+            {"IdleSuspendSeconds", "idle", "suspend-seconds", &idle_suspend_seconds, nullptr, 0, 86400},
+            {"HapticsEnabled", "haptics", "enabled", nullptr, &haptics_enabled, 0, 0},
+            {"HapticsMinIntervalMs", "haptics", "minimum-interval-ms", &haptics_interval, nullptr, 0, 1000},
+            {"BrightnessMinPercent", "brightness", "minimum-percent", &brightness_minimum, nullptr, 1, 30},
+            {"VolumeButtonsEnabled", "volume", "buttons-enabled", nullptr, &volume_buttons, 0, 0},
+            {"VolumeIndicatorEnabled", "volume", "indicator-enabled", nullptr, &volume_indicator, 0, 0},
+            {"VolumeWhileLocked", "volume", "while-locked", nullptr, &volume_locked, 0, 0},
+            {"VolumeStepPercent", "volume", "step-percent", &volume_step, nullptr, 1, 25},
+            {"VolumeMaxPercent", "volume", "maximum-percent", &volume_max, nullptr, 1, 100},
+            {"VolumeIndicatorTimeoutMs", "volume", "timeout-ms", &volume_timeout, nullptr, 300, 10000},
+            {"VolumeIndicatorMargin", "volume", "margin", &volume_margin, nullptr, 0, 100},
+            {"VolumeIndicatorPositionPercent", "volume", "position-percent", &volume_position, nullptr, 0, 100}
+        };
+        auto persist = [&](const char *group, const char *key) {
+            std::string message;
+            if (ShellSettings::save(group, key, value, message)) return true;
+            fail(invocation, message.c_str()); return false;
+        };
+        bool matched = false;
+        for (const auto &setting : settings) {
+            if (strcmp(name, setting.name)) continue;
+            matched = true;
+            unsigned number = 0;
+            if (setting.boolean) {
+                if (strcmp(value, "true") && strcmp(value, "false")) { fail(invocation, "Expected true or false"); return; }
+            } else {
+                if (!*value || strspn(value, "0123456789") != strlen(value)) { fail(invocation, "Expected a whole number"); return; }
+                errno = 0;
+                guint64 parsed = g_ascii_strtoull(value, nullptr, 10);
+                if (errno || parsed < setting.low || parsed > setting.high) { fail(invocation, "Setting is outside its allowed range"); return; }
+                number = static_cast<unsigned>(parsed);
+            }
+            if (!persist(setting.group, setting.key)) return;
+            if (setting.boolean) *setting.boolean = !strcmp(value, "true");
+            else *setting.number = number;
+            break;
+        }
+        if (!matched) {
+            if (!strcmp(name, "Wallpaper")) {
+                if (!ShellSettings::wallpaper_available(root, value)) { fail(invocation, "Wallpaper is unavailable"); return; }
+                if (!persist("appearance", "wallpaper")) return;
+                wallpaper_id = value;
+            } else if (!strcmp(name, "VolumeIndicatorSide")) {
+                if (strcmp(value, "left") && strcmp(value, "right")) { fail(invocation, "Expected left or right"); return; }
+                if (!persist("volume", "side")) return;
+                volume_side = value;
+            } else { fail(invocation, "Unknown shell setting"); return; }
+        }
+        changed();
+        g_dbus_method_invocation_return_value(invocation, g_variant_new("(@a{sv})", state()));
+    }
     void read_idle_config() {
         GKeyFile *config = g_key_file_new();
         std::string path = root + "/session.conf";
         GError *e = nullptr;
-        if (g_key_file_load_from_file(config, path.c_str(), G_KEY_FILE_NONE, &e)) {
+        const bool loaded = g_key_file_load_from_file(config, path.c_str(), G_KEY_FILE_NONE, &e);
+        if (!loaded && !g_error_matches(e, G_FILE_ERROR, G_FILE_ERROR_NOENT))
+            g_warning("Cannot read session settings: %s", e->message);
+        g_clear_error(&e);
+        ShellSettings::merge(config);
+        {
+            gchar *wallpaper = g_key_file_get_string(config, "appearance", "wallpaper", nullptr);
+            if (wallpaper && ShellSettings::wallpaper_available(root, wallpaper)) wallpaper_id = wallpaper;
+            g_free(wallpaper);
             auto read = [&](const char *key, unsigned &value) {
                 GError *error = nullptr;
+                if (!g_key_file_has_key(config, "idle", key, nullptr)) return;
                 gint seconds = g_key_file_get_integer(config, "idle", key, &error);
                 if (!error && seconds >= 0 && seconds <= 86400) value = seconds;
                 else g_warning("Invalid idle setting %s; using %u seconds", key, value);
@@ -593,8 +669,6 @@ class Session {
                 if (sink) volume_sink = g_strstrip(sink);
                 g_free(sink);
             }
-        } else if (!g_error_matches(e, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
-            g_warning("Cannot read idle settings: %s", e->message);
         }
         g_clear_error(&e);
         g_key_file_unref(config);
@@ -959,6 +1033,10 @@ class Session {
         if (!strcmp(name, "GetState")) {
             g_dbus_method_invocation_return_value(i, g_variant_new("(@a{sv})", s.state()));
             return;
+        }
+        if (!strcmp(name, "SetSetting")) {
+            const char *setting, *value; g_variant_get(args, "(&s&s)", &setting, &value);
+            s.set_setting(i, setting, value); return;
         }
         if (!strcmp(name, "Suspend")) { s.suspend(i); return; }
         if (!strcmp(name, "GetBrightness")) {

@@ -109,7 +109,7 @@ export function createBrightness(allowed) {
       });
       await UI.attach(win, slider, thumbRail);
       const thumb = await UI.createElement(win, {
-        renderable: { type: 'box', colour: CREAM, cornerRadius: RADIUS.control, cornerResolution: 16 },
+        renderable: { type: 'box', colour: CREAM, cornerRadius: 14, cornerResolution: 32 },
         item: { size: { x: 28, y: 28 } }, contentAlign: 'fill'
       });
       await UI.attach(win, thumbRail, thumb);

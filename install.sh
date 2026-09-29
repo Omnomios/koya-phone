@@ -141,7 +141,7 @@ get_source() {
         source_dir=$work/source
     fi
     for required in meson.build meson_options.txt hyprland.conf.in session.conf run.sh \
-        start-hyprland.sh scripts/run-hyprland-shell.sh scripts/run-wifi.sh \
+        start-hyprland.sh scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/run-settings.sh \
         install/packages/runtime.list install/packages/build.list install/packages/koya.list; do
         [ -f "$source_dir/$required" ] || die "Source is missing $required"
     done
@@ -231,7 +231,7 @@ prepare_deployment() {
     release=$prefix/releases/$(date +%Y%m%d-%H%M%S)-$$
     as_login mkdir "$release"
     tar -cf "$work/deployment.tar" -C "$source_dir" apps assets native applications install/packages \
-        scripts/run-hyprland-shell.sh scripts/run-wifi.sh install/fix-battery-gauge.sh start-hyprland.sh run.sh \
+        scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/run-settings.sh install/fix-battery-gauge.sh start-hyprland.sh run.sh \
         meson.build meson_options.txt hyprland.conf.in session.conf README.md COPYING
     chmod 0644 "$work/deployment.tar"
     as_login tar -xf "$work/deployment.tar" -C "$release"
@@ -245,10 +245,13 @@ prepare_deployment() {
         [ -x "$release/build/$binary" ] || die "Missing built binary: $binary"
     done
     as_login chmod +x "$release/start-hyprland.sh" "$release/run.sh" \
-        "$release/scripts/run-hyprland-shell.sh" "$release/scripts/run-wifi.sh"
+        "$release/scripts/run-hyprland-shell.sh" "$release/scripts/run-wifi.sh" "$release/scripts/run-settings.sh"
     awk -v path="$prefix/current/scripts/run-wifi.sh" '/^Exec=/ {$0="Exec=" path} {print}' \
         "$release/applications/koya-wifi.desktop" >"$work/wifi.desktop"
     as_login cp "$work/wifi.desktop" "$release/applications/koya-wifi.desktop"
+    awk -v path="$prefix/current/scripts/run-settings.sh" '/^Exec=/ {$0="Exec=" path} {print}' \
+        "$release/applications/koya-settings.desktop" >"$work/settings.desktop"
+    as_login cp "$work/settings.desktop" "$release/applications/koya-settings.desktop"
     {
         printf 'source=%s\nref=%s\nkoya=%s\nrepository=%s\narch=%s\nprofile=%s\nkey=%s\n' \
             "${source_url:-local:$source_dir}" "$ref" "$koya_version" "$KOYA_REPOSITORY" "$arch" "$profile" "$KOYA_KEY"

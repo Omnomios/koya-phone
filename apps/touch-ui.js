@@ -1,7 +1,8 @@
 import * as UI from 'Helix/UserInterface';
-import { FONT, FONT_STRONG, CREAM, CLEAR, CARD, TONAL, TRACK, ORANGE, WALLPAPER, WALLPAPER_SIZE, SHEET_TINT, RADIUS, TYPE, HEADER_HEIGHT, TOUCH } from './theme.js';
+import { FONT, FONT_STRONG, CREAM, CLEAR, CARD, TONAL, TRACK, ORANGE, SHEET_TINT, RADIUS, TYPE, HEADER_HEIGHT, TOUCH } from './theme.js';
 import { clips } from './motion.js';
 import { haptic } from './haptics.js';
+import { wallpaperSurface } from './wallpaper-surface.js';
 
 // contentAlign places the text's bounds in its slot. With the default 'ink'
 // basis those bounds are the tight glyph box, which changes with every string
@@ -84,11 +85,7 @@ export async function button(win, parent, label, width, height, handler, options
 // Full-screen sheets show the wallpaper dimmed underneath. `offset` aligns the
 // sprite with the real wallpaper when the sheet window starts below the top bar.
 export async function backdrop(win, parent, size, offset = 0) {
-  const id = await UI.createElement(win, {
-    renderable: { type: 'sprite', texture: WALLPAPER, frame: 0,
-      frames: [{ size: { x: size.x, y: size.y + offset }, aabb: { min: { x: 0, y: 0 }, max: WALLPAPER_SIZE }, colour: SHEET_TINT }] },
-    item: { size }, contentAlign: 'fill'
-  });
+  const id = await wallpaperSurface(win, { x: size.x, y: size.y + offset }, SHEET_TINT);
   await UI.attach(win, parent, id);
   if (offset) await UI.setPosition(win, id, { x: 0, y: -offset });
   return id;
@@ -115,21 +112,25 @@ export async function sheetHeader(win, parent, title, width, actions = [], acces
 
 // A full-width tappable row (settings tiles, list entries) with the same
 // press response as buttons. Children are laid out left to right.
+// onPress/onRelease let callers add secondary motion (a chevron nudge).
 export async function row(win, parent, width, height, handler, options = {}) {
   let motion;
   const id = await UI.createElement(win, {
     renderable: { type: 'box', colour: options.colour || CARD, cornerRadius: options.radius ?? RADIUS.surface, cornerResolution: 16, origin: { x: 0.5, y: 0.5 } },
     layout: { type: 'row', alignItems: 'center', gap: options.gap ?? 12, padding: { l: 16, r: options.right ?? 12, t: 0, b: 0 } },
     item: { size: { x: width, y: height } }, contentAlign: 'fill', inheritAnimation: true,
-    onMouseDown: () => { haptic(); motion?.play('press'); },
-    onMouseUp: () => motion?.play('release'),
-    onMouseExit: () => motion?.play('release'),
+    onMouseDown: () => { haptic(); motion?.play('press'); options.onPress?.(); },
+    onMouseUp: () => { motion?.play('release'); options.onRelease?.(); },
+    onMouseExit: () => { motion?.play('release'); options.onRelease?.(); },
     onMouseClick: handler
   });
   await UI.attach(win, parent, id);
+  // Press frames also restore opacity and offset, so tapping a row during its
+  // entrance cannot leave it half-faded or displaced.
+  const rest = { opacity: 1, position: { x: 0, y: 0 } };
   motion = await clips(win, id, {
-    press: [{ time: 0.07, scale: { x: 0.98, y: 0.98 }, ease: 'outQuad' }],
-    release: [{ time: 0.10, scale: { x: 1.008, y: 1.008 }, ease: 'outCubic' }, { time: 0.23, scale: { x: 1, y: 1 }, ease: 'outCubic' }]
+    press: [{ time: 0.07, ...rest, scale: { x: 0.97, y: 0.97 }, ease: 'outQuad' }],
+    release: [{ time: 0.11, ...rest, scale: { x: 1.012, y: 1.012 }, ease: 'outCubic' }, { time: 0.26, ...rest, scale: { x: 1, y: 1 }, ease: 'inOutQuad' }]
   });
   return id;
 }
@@ -146,14 +147,26 @@ export function pill(win, parent, value, width, handler, options = {}) {
 }
 
 // On/off switch. Returns a setter so callers can reflect external state.
+// The knob stretches as it leaves, overshoots its stop and settles; the whole
+// switch squashes under the finger.
 export async function toggle(win, parent, on, handler) {
   const width = 52, height = 32, knob = 24, inset = (height - knob) / 2;
+  let pop;
   const target = await UI.createElement(win, {
+    // Invisible box: a bare container ignores its pivot when scaled.
+    renderable: { type: 'box', colour: CLEAR, origin: { x: 0.5, y: 0.5 } },
     layout: { type: 'column', justifyContent: 'center', alignItems: 'center' },
-    item: { size: { x: width + 16, y: TOUCH } },
-    onMouseDown: () => haptic(), onMouseClick: handler
+    item: { size: { x: width + 16, y: TOUCH } }, contentAlign: 'fill', inheritAnimation: true,
+    onMouseDown: () => { haptic(); pop?.play('press'); },
+    onMouseUp: () => pop?.play('release'),
+    onMouseExit: () => pop?.play('release'),
+    onMouseClick: handler
   });
   await UI.attach(win, parent, target);
+  pop = await clips(win, target, {
+    press: [{ time: 0.06, scale: { x: 0.88, y: 0.88 }, ease: 'outQuad' }],
+    release: [{ time: 0.16, scale: { x: 1.08, y: 1.08 }, ease: 'outCubic' }, { time: 0.3, scale: { x: 1, y: 1 }, ease: 'inOutQuad' }]
+  });
   const track = await UI.createElement(win, {
     // The one fully round control: a switch reads as a switch by its shape.
     renderable: { type: 'box', colour: on ? ORANGE : TRACK, cornerRadius: height / 2, cornerResolution: 32 },
@@ -163,14 +176,17 @@ export async function toggle(win, parent, on, handler) {
   });
   await UI.attach(win, target, track);
   const thumb = await UI.createElement(win, {
-    renderable: { type: 'box', colour: CREAM, cornerRadius: knob / 2, cornerResolution: 32 },
+    renderable: { type: 'box', colour: CREAM, cornerRadius: knob / 2, cornerResolution: 32, origin: { x: 0.5, y: 0.5 } },
     item: { size: { x: knob, y: knob } }, contentAlign: 'fill'
   });
   await UI.attach(win, track, thumb);
   const travel = width - 2 * inset - knob;
+  const stretch = { x: 1.3, y: 0.8 }, round = { x: 1, y: 1 };
   const motion = await clips(win, thumb, {
-    on: [{ time: 0.16, position: { x: travel, y: 0 }, ease: 'outCubic' }],
-    off: [{ time: 0.16, position: { x: 0, y: 0 }, ease: 'outCubic' }]
+    on: [{ time: 0.1, position: { x: travel + 3, y: 0 }, scale: stretch, ease: 'outCubic' },
+      { time: 0.26, position: { x: travel, y: 0 }, scale: round, ease: 'outQuad' }],
+    off: [{ time: 0.1, position: { x: -3, y: 0 }, scale: stretch, ease: 'outCubic' },
+      { time: 0.26, position: { x: 0, y: 0 }, scale: round, ease: 'outQuad' }]
   });
   let current = on;
   if (on) await UI.setPosition(win, thumb, { x: travel, y: 0 });

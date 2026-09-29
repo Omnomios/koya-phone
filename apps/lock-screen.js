@@ -3,10 +3,11 @@ import * as UI from 'Helix/UserInterface';
 import * as Log from 'Helix/Log';
 import { connect, call } from './session.js';
 import { clips } from './motion.js';
+import { wallpaperSurface } from './wallpaper-surface.js';
 import { lockMotion } from './lock-motion.js';
 import { swipeGesture } from './swipe.js';
 import { text as textElement } from './touch-ui.js';
-import { CREAM, ORANGE, MUTED, WALLPAPER, WALLPAPER_SIZE, TYPE, SPACE } from './theme.js';
+import { CREAM, ORANGE, MUTED, TYPE, SPACE } from './theme.js';
 
 // Visual prototype, not a security boundary. Display power belongs to the coordinator.
 export default async () => {
@@ -27,11 +28,7 @@ export default async () => {
     renderable: { type: 'box', colour: [0, 0, 0, 1] }, item: { size }, contentAlign: 'fill'
   });
   await UI.attachRoot(win, root);
-  const sheet = await UI.createElement(win, {
-    renderable: { type: 'sprite', texture: WALLPAPER, frame: 0,
-      frames: [{ size, origin: { x: 0, y: 0 }, aabb: { min: { x: 0, y: 0 }, max: WALLPAPER_SIZE }, colour: [0.45, 0.50, 0.43, 1] }] },
-    item: { size }, contentAlign: 'fill'
-  });
+  const sheet = await wallpaperSurface(win, size, [0.45, 0.50, 0.43, 1]);
   await UI.attach(win, root, sheet);
   await UI.setElementId(win, sheet, 'lock-sheet');
   // Clock in the upper third, where the eye lands; the unlock hint sits at

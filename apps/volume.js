@@ -1,4 +1,5 @@
 import * as UI from 'Helix/UserInterface';
+import * as Compositor from 'Koya/Compositor';
 import * as Log from 'Helix/Log';
 import { pulseAudio } from './pulse-audio.js';
 import { notificationSurface } from './notification-surface.js';
@@ -10,7 +11,7 @@ import { haptic } from './haptics.js';
 export function createVolume(display, options = {}) {
   const size = { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) };
   const hudSize = { x: 72, y: 280 };
-  let state = {}, started = false, surface, glyph, label, fill, motion, timer, wanted = false, latest, lastKey;
+  let state = {}, started = false, surface, glyph, label, fill, motion, timer, wanted = false, latest, lastKey, layoutKey;
   let queue = Promise.resolve();
   const enqueue = task => { queue = queue.then(task).catch(error => Log.error('Volume indicator: ' + error)); return queue; };
   const visible = () => state.Active && state.ScreenState !== 'off' && state.PowerMenuState === 'closed' && state.VolumeIndicatorEnabled !== false;
@@ -56,15 +57,22 @@ export function createVolume(display, options = {}) {
       { time: 0.22, scale: { x: 1, y: 1 }, ease: 'outCubic' }
     ] });
     await surface.prepare(); lastKey = undefined;
+    layoutKey = JSON.stringify([state.VolumeIndicatorSide, state.VolumeIndicatorMargin, state.VolumeIndicatorPositionPercent]);
   };
   async function reconcile() {
     if (!wanted || !visible()) {
       if (surface?.shown) await surface.hide(!visible());
       return;
     }
+    const nextLayout = JSON.stringify([state.VolumeIndicatorSide, state.VolumeIndicatorMargin, state.VolumeIndicatorPositionPercent]);
+    if (surface && !surface.closed && layoutKey !== nextLayout) {
+      if (surface.shown) await surface.hide(true);
+      if (!surface.closed) await Compositor.destroyWindow(surface.win);
+      surface = undefined;
+    }
     if (!surface || surface.closed) await build();
     const value = latest || { available: false, error: 'No audio output' };
-    const key = JSON.stringify([value.available, value.percent, value.muted]);
+    const key = JSON.stringify([value.available, value.percent, value.muted, state.VolumeMaxPercent]);
     if (key !== lastKey) {
       lastKey = key;
       const muted = value.muted || value.percent === 0;
