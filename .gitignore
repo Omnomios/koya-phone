@@ -1,3 +1,6 @@
 /build/
+/build-local-dev/
+/build-local-dev-container/
+/dev/.build/
 __pycache__/
 *.pyc

@@ -630,7 +630,7 @@ class Session {
     }
     bool display_request(const std::string &packet, char expected) {
 #ifdef KOYA_TESTING
-        if (g_str_has_suffix(fixture.c_str(), "component.py")) return true;
+        if (g_str_has_suffix(fixture.c_str(), "component.sh")) return true;
 #endif
         if (display_fd < 0) {
             struct sockaddr_un address{};

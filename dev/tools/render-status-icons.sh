@@ -1,8 +1,10 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Rebuild editable status SVGs and the PNG textures Koya consumes.
-set -eu
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+set -euo pipefail
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 icons="$root/assets/status"
+renderer=${KOYA_ICON_RENDERER:-$root/build/koya-render-icon}
+[[ -x "$renderer" ]] || { printf 'Build koya-render-icon or set KOYA_ICON_RENDERER.\n' >&2; exit 1; }
 mkdir -p "$icons"
 cream='#F4E9D8'
 muted='#59645D'
@@ -55,5 +57,5 @@ cat >"$icons/ethernet.svg" <<EOF
 <svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 24 24" fill="none" stroke="$cream" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14v10h-4v4H9v-4H5Z"/><path d="M8 5v4m4-4v4m4-4v4"/></svg>
 EOF
 for source in "$icons"/*.svg; do
-    "$root/build/koya-render-icon" "$source" "${source%.svg}.png"
+    "$renderer" "$source" "${source%.svg}.png"
 done

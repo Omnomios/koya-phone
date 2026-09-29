@@ -220,7 +220,7 @@ prepare_deployment() {
     release=$prefix/releases/$(date +%Y%m%d-%H%M%S)-$$
     as_login mkdir "$release"
     tar -cf "$work/deployment.tar" -C "$source_dir" apps assets native applications install/packages \
-        scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/fix-battery-gauge.sh start-hyprland.sh run.sh \
+        scripts/run-hyprland-shell.sh scripts/run-wifi.sh install/fix-battery-gauge.sh start-hyprland.sh run.sh \
         meson.build meson_options.txt hyprland.conf.in session.conf README.md COPYING
     chmod 0644 "$work/deployment.tar"
     as_login tar -xf "$work/deployment.tar" -C "$release"

@@ -1,0 +1,28 @@
+ARG ALPINE_VERSION=3.23
+FROM docker.io/library/alpine:${ALPINE_VERSION}
+
+ARG HYPRLAND_VERSION=0.51.1-r1
+ARG KOYA_VERSION=0.5.3-r888
+ARG DEV_UID=1000
+ARG DEV_GID=1000
+
+# The native build uses libudev supplied by Alpine's eudev development package.
+# Mesa drivers cover Intel/AMD and software Vulkan on typical Linux desktops.
+RUN apk add --no-cache \
+    bash coreutils util-linux dbus glib glib-dev build-base meson ninja pkgconf \
+    libevdev-dev eudev-dev curl gnupg socat \
+    "hyprland=${HYPRLAND_VERSION}" squeekboard \
+    gdk-pixbuf librsvg hicolor-icon-theme font-dejavu \
+    mesa-dri-gallium mesa-vulkan-intel mesa-vulkan-ati mesa-vulkan-swrast
+
+COPY dev/install-koya-release.sh /opt/koya/install-release.sh
+RUN bash /opt/koya/install-release.sh "${KOYA_VERSION}"
+
+RUN group=$(awk -F: -v gid="${DEV_GID}" '$3==gid {print $1; exit}' /etc/group) && \
+    if [ -z "$group" ]; then addgroup -g "${DEV_GID}" dev; group=dev; fi && \
+    adduser -D -u "${DEV_UID}" -G "$group" dev
+ENV HOME=/home/dev USER=dev LOGNAME=dev XDG_RUNTIME_DIR=/home/dev/runtime
+USER ${DEV_UID}:${DEV_GID}
+RUN mkdir -m 0700 /home/dev/runtime
+WORKDIR /work/koya-phone
+CMD ["bash", "dev/session.sh", "--build-dir", "/work/koya-phone/dev/.build/container"]

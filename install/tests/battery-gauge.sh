@@ -1,17 +1,17 @@
 #!/bin/sh
 # Offline boot-file fixtures and mocked I2C/deployment; no hardware access.
 set -eu
-shell_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+shell_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 test_dir=$(mktemp -d /tmp/koya-gauge-test-XXXXXX)
 trap 'rm -rf "$test_dir"' 0
 export TEST_GAUGE_DIR="$test_dir"
-sh -n "$shell_root/scripts/fix-battery-gauge.sh"
-sh "$shell_root/scripts/fix-battery-gauge.sh" --help >/dev/null
-if sh "$shell_root/scripts/fix-battery-gauge.sh" --unknown >/dev/null 2>&1; then exit 1; fi
+sh -n "$shell_root/install/fix-battery-gauge.sh"
+sh "$shell_root/install/fix-battery-gauge.sh" --help >/dev/null
+if sh "$shell_root/install/fix-battery-gauge.sh" --unknown >/dev/null 2>&1; then exit 1; fi
 for tool in dtc fdtget fdtput; do
     command -v "$tool" >/dev/null || { printf 'SKIP: DTB fixtures require dtc\n'; exit 77; }
 done
-sed '$d' "$shell_root/scripts/fix-battery-gauge.sh" > "$test_dir/library.sh"
+sed '$d' "$shell_root/install/fix-battery-gauge.sh" > "$test_dir/library.sh"
 cat > "$test_dir/source.dts" <<'DTS'
 /dts-v1/;
 / {

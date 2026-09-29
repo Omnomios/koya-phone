@@ -104,7 +104,7 @@ behaviour.
 ## OnePlus 6 battery-gauge workaround
 
 If a replacement battery reports an unknown percentage or incorrect readings,
-use [`fix-battery-gauge.sh`](../scripts/fix-battery-gauge.sh) to check whether it
+use [`fix-battery-gauge.sh`](../install/fix-battery-gauge.sh) to check whether it
 needs a different battery-gauge configuration. The utility runs separately from
 the shell installer and supports postmarketOS on the OnePlus 6 (`enchilada`).
 
@@ -112,7 +112,7 @@ Install its tools, download the script and check the battery:
 
 ```sh
 sudo apk add dtc i2c-tools
-curl -fSL https://raw.githubusercontent.com/Omnomios/koya-phone/master/scripts/fix-battery-gauge.sh -o /tmp/fix-battery-gauge.sh
+curl -fSL https://raw.githubusercontent.com/Omnomios/koya-phone/master/install/fix-battery-gauge.sh -o /tmp/fix-battery-gauge.sh
 sudo sh /tmp/fix-battery-gauge.sh --check
 ```
 

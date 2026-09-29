@@ -1,7 +1,7 @@
 #!/bin/sh
 # Offline installer checks: private files and mocked downloads/privilege only.
 set -eu
-shell_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+shell_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 test_dir=$(mktemp -d /tmp/koya-install-test.XXXXXX)
 trap 'rm -rf "$test_dir"' 0
 export TEST_INSTALL_ROOT="$shell_root" TEST_INSTALL_DIR="$test_dir"
@@ -134,6 +134,34 @@ work=$TEST_INSTALL_DIR/download-bad-key; mkdir "$work"
 if (TEST_KEY=WRONG; koya_version=0.5.3-r888; get_koya); then exit 1; fi
 work=$TEST_INSTALL_DIR/download-bad-signature; mkdir "$work"
 if (TEST_BAD_SIGNATURE=1; koya_version=0.5.3-r888; get_koya); then exit 1; fi
+
+# Phone deployment contains the application and device tooling, while dev
+# environments and checks stay in the checkout. Mock compilation only here.
+work=$TEST_INSTALL_DIR/deployment-work; mkdir "$work"
+cp "$TEST_INSTALL_DIR/download-good/SHA256SUMS" "$work/SHA256SUMS"
+login_user=fixture; ref=master; koya_version=0.5.3-r888
+as_login() {
+    if [ "$1" = meson ]; then
+        case "$2" in
+            setup) mkdir -p "$3" ;;
+            compile)
+                for binary in koya-session koya-hyprland-display koya-launch-app; do
+                    printf '#!/bin/sh\nexit 0\n' >"$release/build/$binary"
+                    chmod +x "$release/build/$binary"
+                done ;;
+            *) exit 1 ;;
+        esac
+    else "$@"; fi
+}
+prepare_deployment
+[ -f "$release/apps/wallpaper.js" ]
+[ -f "$release/native/session.cpp" ]
+[ -f "$release/install/fix-battery-gauge.sh" ]
+[ -f "$release/scripts/run-hyprland-shell.sh" ]
+[ ! -e "$release/dev" ]
+[ ! -e "$release/tests" ]
+[ ! -e "$release/install/tests" ]
+[ ! -e "$release/native/local-dev-services.cpp" ]
 CHECK
 sh "$test_dir/check.sh"
-printf 'PASS: offline installer manifests, config preservation, startup deduplication, graphical cgroup cleanup, pinned key selection and signature failure handling\n'
+printf 'PASS: offline installer manifests, config preservation, startup deduplication, graphical cgroup cleanup, signatures and deployment boundaries\n'

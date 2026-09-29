@@ -6,18 +6,16 @@ executable('koya-launch-app', 'native/launch-app.cpp', dependencies: dependency(
 executable('koya-render-icon', 'native/render-icon.cpp', dependencies: dependency('gio-unix-2.0'))
 hyprland_display = executable('koya-hyprland-display', 'native/hyprland-display.cpp', dependencies: dependency('gio-unix-2.0'))
 if get_option('integration_tests')
-  python = find_program('python3')
+  bash = find_program('bash')
+  find_program('dbus-run-session')
+  find_program('socat')
   coordinator_test = executable('koya-session-test', 'native/session.cpp', dependencies: deps,
     cpp_args: ['-DKOYA_TESTING'])
   hyprland_display_test = executable('koya-hyprland-display-test', 'native/hyprland-display.cpp',
     dependencies: dependency('gio-unix-2.0'), cpp_args: ['-DKOYA_TESTING'])
-  test('session-integration', python,
-    args: [files('tests/test-session.py'), coordinator_test.full_path()],
-    depends: coordinator_test, timeout: 70)
-  test('hyprland-integration', python, args: files('tests/test-hyprland.py'),
-    depends: [coordinator_test, hyprland_display_test, hyprland_display], timeout: 35)
-  test('installer-offline', find_program('sh'), args: files('tests/test-install.sh'), timeout: 10)
-  test('battery-gauge-utility', find_program('sh'), args: files('tests/test-battery-gauge.sh'), timeout: 20)
-  test('status-integration', python, args: files('tests/test-status.py'), depends: coordinator_test, timeout: 20)
-  test('keyboard-integration', python, args: files('tests/test-keyboard.py'), depends: coordinator_test, timeout: 20)
+  foreach name : ['session', 'hyprland', 'status', 'keyboard', 'wifi']
+    test(name + '-integration', bash,
+      args: [files('tests/run.sh'), name, meson.current_build_dir()],
+      depends: [coordinator_test, hyprland_display_test, hyprland_display], timeout: 75)
+  endforeach
 endif

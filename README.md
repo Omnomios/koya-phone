@@ -38,6 +38,24 @@ graphical session.** Firefox and Alacritty are included by default.
 See the [installation guide](docs/installation.md) for options, troubleshooting
 and the [OnePlus 6 battery fix](docs/installation.md#oneplus-6-battery-gauge-workaround).
 
+## Develop on a desktop
+
+Run the checkout in a nested Hyprland window on a Linux Wayland desktop:
+
+```bash
+./local-dev.sh
+```
+
+The container uses Alpine with pinned Hyprland and verified Koya release packages.
+It mounts the checkout for live UI edits and uses private services for phone
+features. Press **F5** to restart after editing the UI. Podman or Docker, a
+Wayland desktop and access to a GPU render device are required.
+
+See the [local development guide](docs/local-development.md) for version
+selection, controls and optional host setup with an installed Koya release.
+The [repository layout](docs/repository-layout.md) separates shell code, phone
+deployment and the development environment.
+
 ## Use
 
 Tap **Apps** to launch an application, **Home** to return home, and **Desktops**

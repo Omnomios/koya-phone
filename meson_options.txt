@@ -1,2 +1,2 @@
 option('integration_tests', type: 'boolean', value: true,
-  description: 'Build and configure development integration tests')
+  description: 'Build and configure application integration tests')

@@ -1,3 +1,5 @@
 # Optional development checks; no runtime service uses these.
-python3
-py3-gobject3
+bash
+coreutils
+util-linux
+socat
