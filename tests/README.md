@@ -7,8 +7,8 @@ existing test hooks. These tests create no windows and need no compositor or GPU
 
 Use a Koya installation that includes the D-Bus plugin's `exportObject`,
 `unexportObject`, and `emitSignal` APIs and the windowless event-loop fix. The
-development image currently pins `0.5.3-r888`; these additions need an updated
-Koya installation. No Koya or Helix source checkout is required by the tests.
+development image installs the latest Koya release from its Alpine repository.
+No Koya or Helix source checkout is required by the tests.
 
 Install the native build dependencies and Bash, D-Bus, coreutils, util-linux,
 `socat`, and GdkPixbuf with SVG/PNG loaders. Then run:

@@ -6,6 +6,7 @@ set -eu
 # Default publication source; --repo can override it for forks.
 DEFAULT_REPO=Omnomios/koya-phone
 KOYA_KEY=06089A97B6D66C69BFD021F0DF7B60698EF57FF3
+KOYA_REPOSITORY=https://www.koya-ui.com/repository/alpine
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'koya-install: %s\n' "$*" >&2; exit 1; }
@@ -18,8 +19,8 @@ Usage: sh install.sh [options]
   --user USER            Non-root graphical login; normally detected
   --prefix DIRECTORY     Deployment; default ~/.local/share/koya-shell
   --profile PROFILE      auto (default), oneplus-enchilada, or generic
-  --koya-version VERSION Official matching APK release, e.g. 0.5.3-r888;
-                         default latest from Koya's installation page
+  --koya-version VERSION Package version available in the Koya Alpine repo;
+                         default latest
   --no-apps              Skip Firefox, Alacritty and extra fonts
   --no-start             Install/select the session, leave tinydm stopped
   --help                Show this help
@@ -58,7 +59,11 @@ cleanup() {
         [ "${selected:-0}" = 0 ] || say "Session files were selected; inspect $login_home/.local/state/tinydm.log before starting tinydm." >&2
         [ -z "${release:-}" ] || say "Prepared deployment: $release" >&2
     fi
-    [ -z "${work:-}" ] || rm -rf "$work"
+    if [ -n "${work:-}" ]; then
+        gpgconf --homedir "$work/gnupg" --kill gpg-agent 2>/dev/null || :
+        gpgconf --homedir "$work/key-bundle" --kill gpg-agent 2>/dev/null || :
+        rm -rf "$work"
+    fi
     exit "$cleanup_code"
 }
 detect_user() {
@@ -103,7 +108,7 @@ platform() {
     case "$arch" in aarch64|x86_64) ;; *) die "Unsupported architecture: $arch" ;; esac
     apk_major=$(apk --version | sed -n 's/^apk-tools \([0-9][0-9]*\)\..*/\1/p')
     case "$apk_major" in ''|*[!0-9]*) die 'Cannot determine apk-tools version.' ;; esac
-    [ "$apk_major" -ge 3 ] || die 'Koya APK downloads require apk-tools 3 or newer (postmarketOS v25.12 or newer).'
+    [ "$apk_major" -ge 3 ] || die 'The Koya repository requires apk-tools 3 or newer (postmarketOS v25.12 or newer).'
     case "$profile" in
         auto)
             if apk info -e device-oneplus-enchilada >/dev/null 2>&1; then profile=oneplus-enchilada;
@@ -165,33 +170,36 @@ verify_koya_key() {
         awk -F: '$1=="pub" {primary=1} $1=="fpr" && primary {print $10; primary=0}')
     printf '%s\n' "$fingerprints" | grep -Fxq "$KOYA_KEY" || die 'Koya signing key fingerprint does not match the pinned key.'
     # The published bundle includes historical keys. Only the pinned primary key
-    # and its subkeys may enter the keyring used to verify package signatures.
+    # and its subkeys may enter the keyring used to verify the repository key.
     gpg --homedir "$work/key-bundle" --batch --import "$work/koya-packages.pub"
     gpg --homedir "$work/key-bundle" --batch --export "$KOYA_KEY" >"$work/koya-key.gpg"
     gpg --homedir "$work/gnupg" --batch --import "$work/koya-key.gpg"
 }
-get_koya() {
+configure_koya_repository() {
     case "$download_base" in https://*) ;; *) die 'KOYA_DOWNLOAD_BASE must use HTTPS.' ;; esac
-    if [ "$koya_version" = latest ]; then
-        fetch https://developer.koya-ui.com/install/index.html "$work/koya-install.html"
-        filename=$(grep -o "koya-[0-9][0-9.]*-r[0-9][0-9]*\.$arch\.apk" "$work/koya-install.html" | head -n 1)
-        [ -n "$filename" ] || die 'Cannot resolve latest Koya APK; specify --koya-version.'
-        koya_version=${filename#koya-}; koya_version=${koya_version%.$arch.apk}
+    if [ "$koya_version" != latest ]; then
+        printf '%s\n' "$koya_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$' || die 'Use latest or an APK version available in the Koya repository.'
+        [ "${koya_version##*-r}" -ge 888 ] || die 'This shell requires Koya build 888 or newer (text-input-v3 and independent D-Bus handles).'
     fi
-    printf '%s\n' "$koya_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$' || die 'Use an APK version such as 0.5.3-r888.'
-    [ "${koya_version##*-r}" -ge 888 ] || die 'This shell requires Koya build 888 or newer (text-input-v3 and independent D-Bus handles).'
-    verify_koya_key
-    mkdir "$work/downloads"
-    manifest "$source_dir/install/packages/koya.list" >"$work/koya-packages"
-    [ "$(cat "$work/koya-packages")" = "$(printf 'koya\nhelix-plugin-dbus\nhelix-plugin-process')" ] || die 'Unexpected Koya package set.'
+    manifest "$source_dir/install/packages/koya.list" >"$work/koya-package-names"
+    [ "$(cat "$work/koya-package-names")" = "$(printf 'koya\nhelix-plugin-dbus\nhelix-plugin-process')" ] || die 'Unexpected Koya package set.'
+    : >"$work/koya-packages"
     while IFS= read -r package; do
-        artifact=$package-$koya_version.$arch.apk
-        say "Downloading and verifying $artifact..."
-        fetch "$download_base/$artifact" "$work/downloads/$artifact"
-        fetch "$download_base/$artifact.sig" "$work/downloads/$artifact.sig"
-        gpg --homedir "$work/gnupg" --batch --verify "$work/downloads/$artifact.sig" "$work/downloads/$artifact" || die "Bad signature: $artifact"
-    done <"$work/koya-packages"
-    (cd "$work/downloads" && sha256sum ./*.apk) >"$work/SHA256SUMS"
+        if [ "$koya_version" != latest ]; then
+            printf '%s@koya=%s\n' "$package" "$koya_version"
+        elif [ "$package" = koya ]; then
+            printf 'koya@koya>=0.5.3-r888\n'
+        else
+            printf '%s@koya\n' "$package"
+        fi
+    done <"$work/koya-package-names" >"$work/koya-packages"
+    verify_koya_key
+    fetch "$download_base/koya-apk.rsa.pub" "$work/koya-apk.rsa.pub"
+    fetch "$download_base/koya-apk.rsa.pub.sig" "$work/koya-apk.rsa.pub.sig"
+    gpg --homedir "$work/gnupg" --batch --verify "$work/koya-apk.rsa.pub.sig" "$work/koya-apk.rsa.pub" || die 'Bad signature: Koya Alpine repository key.'
+    as_root install -m 0644 "$work/koya-apk.rsa.pub" /etc/apk/keys/koya-apk.rsa.pub
+    # A tagged repository limits package selection to the requested Koya packages.
+    as_root sh -c 'repo="v3 @koya $1"; grep -Fxq "$repo" /etc/apk/repositories || printf "%s\n" "$repo" >>/etc/apk/repositories' sh "$KOYA_REPOSITORY"
 }
 install_packages() {
     say 'Refreshing existing repositories and checking package availability...'
@@ -199,12 +207,15 @@ install_packages() {
     set --
     while IFS= read -r package; do set -- "$@" "$package"; done <"$work/packages"
     as_root apk add --simulate "$@"
-    # Signature tooling is needed before trusting the standalone Koya APKs.
+    # Authenticate the repository key before enabling it for APK installation.
     as_root apk add curl gnupg
-    get_koya
-    set -- "$@" "$work"/downloads/*.apk
-    as_root apk add --simulate --allow-untrusted "$@"
-    as_root apk add --allow-untrusted "$@"
+    configure_koya_repository
+    as_root apk update
+    while IFS= read -r package; do set -- "$@" "$package"; done <"$work/koya-packages"
+    # APK verifies the repository index and packages using the authenticated key.
+    as_root apk add --simulate --upgrade "$@"
+    as_root apk add --upgrade "$@"
+    apk info -v -e koya helix-plugin-dbus helix-plugin-process >"$work/koya-installed"
     apk info -v -e hyprland | grep -q '^hyprland-0\.51\.' || die 'Installed Hyprland is not 0.51.x.'
     for needed in /usr/bin/koya /usr/lib/libhx-dbus.so /usr/lib/libhx-process.so \
         /usr/share/koya/assets/fonts/SourceSans3-Regular.ttf; do
@@ -239,10 +250,10 @@ prepare_deployment() {
         "$release/applications/koya-wifi.desktop" >"$work/wifi.desktop"
     as_login cp "$work/wifi.desktop" "$release/applications/koya-wifi.desktop"
     {
-        printf 'source=%s\nref=%s\nkoya=%s\ndownload_base=%s\narch=%s\nprofile=%s\nkey=%s\n' \
-            "${source_url:-local:$source_dir}" "$ref" "$koya_version" "$download_base" "$arch" "$profile" "$KOYA_KEY"
+        printf 'source=%s\nref=%s\nkoya=%s\nrepository=%s\narch=%s\nprofile=%s\nkey=%s\n' \
+            "${source_url:-local:$source_dir}" "$ref" "$koya_version" "$KOYA_REPOSITORY" "$arch" "$profile" "$KOYA_KEY"
         [ ! -f "$work/source.tar.gz" ] || sha256sum "$work/source.tar.gz" | awk '{print "source_sha256=" $1}'
-        cat "$work/SHA256SUMS"
+        cat "$work/koya-installed"
     } >"$work/install-record.txt"
     as_login cp "$work/install-record.txt" "$release/install-record.txt"
 }
@@ -458,7 +469,7 @@ main() {
     select_session
     [ "$start" = 0 ] || wait_session
     say "Installed: $prefix/current"
-    say "Release and verified download record: $release/install-record.txt"
+    say "Release and installed package record: $release/install-record.txt"
     say "Settings: $prefix/current/session.conf and /etc/koya-shell/hyprland.conf"
     if [ "$start" = 0 ]; then say 'tinydm is stopped. Start it from root with: rc-service tinydm start';
     else say "tinydm started. Session log: $login_home/.local/state/tinydm.log"; fi

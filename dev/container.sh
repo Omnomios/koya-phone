@@ -7,10 +7,10 @@ usage() {
     cat <<'HELP'
 Usage: ./local-dev.sh [container options] [-- session options]
   --engine COMMAND         podman or docker; detected automatically
-  --koya-version VERSION   Verified Alpine APK release; default 0.5.3-r888
-                           'latest' resolves the publication page without cache
-  --hyprland-version VER   Alpine package version; default 0.51.1-r1
-  --image NAME             Local image tag; default koya-phone-dev:alpine3.23
+  --koya-version VERSION   Koya repository version; default latest
+                           'latest' refreshes the image without cache
+  --hyprland-version VER   Alpine package version; default 0.54.3-r0
+  --image NAME             Local image tag; default koya-phone-dev:alpine3.24
   --no-image-build         Reuse an already built image
   --check                  Build and run development checks without a desktop
   --gpu DEVICE             Share this render device (repeatable); default all
@@ -23,7 +23,7 @@ Examples:
 The image installs signed Koya release packages and all development dependencies.
 HELP
 }
-engine= koya_version=0.5.3-r888 hyprland_version=0.51.1-r1 image=koya-phone-dev:alpine3.23 build_image=1 run_checks=0
+engine= koya_version=latest hyprland_version=0.54.3-r0 image=koya-phone-dev:alpine3.24 build_image=1 run_checks=0
 gpus=() dev_args=()
 need_value() { [[ $# -ge 2 && -n "$2" ]] || fail "$1 requires a value"; }
 while (( $# )); do
@@ -42,8 +42,8 @@ while (( $# )); do
     shift
 done
 (( EUID != 0 )) || fail 'Run as your desktop user, without sudo.'
-[[ "$koya_version" == latest || "$koya_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$ ]] || fail 'Use a Koya APK version such as 0.5.3-r888, or latest.'
-[[ "$hyprland_version" =~ ^0\.51\.[0-9]+-r[0-9]+$ ]] || fail 'This checkout requires a Hyprland 0.51.x APK version.'
+[[ "$koya_version" == latest || "$koya_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$ ]] || fail 'Use latest or an APK version in MAJOR.MINOR.PATCH-rBUILD format.'
+[[ "$hyprland_version" =~ ^0\.54\.[0-9]+-r[0-9]+$ ]] || fail 'Local development requires a Hyprland 0.54.x APK version.'
 if [[ -z "$engine" ]]; then
     if command -v podman >/dev/null; then engine=podman;
     elif command -v docker >/dev/null; then engine=docker;

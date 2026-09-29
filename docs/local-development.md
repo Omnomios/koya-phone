@@ -8,11 +8,12 @@ coordinator with hardware input capture disabled, using its own Meson project.
 
 ## Run in Alpine
 
-The container workflow installs Koya's published Alpine APKs and matching
-D-Bus/process plugins, using the phone installer's pinned signing key and
-detached signature checks. The image supplies the runtime, Hyprland and native
-development dependencies. The launcher and release downloader are Bash; the
-mock phone services are native C++.
+The container workflow installs Koya and its matching D-Bus/process plugins from
+the [Koya Alpine repository](https://developer.koya-ui.com/install/index.html#alpine-postmarketos-repository).
+The setup authenticates the repository's public key with Koya's pinned signing
+key; `apk` verifies the repository index and packages. The image supplies the
+runtime, Hyprland and native development dependencies. The launcher and
+repository setup use Bash; the mock phone services are native C++.
 
 You need a Linux Wayland desktop, Podman or Docker, and read/write access to a
 GPU render node under `/dev/dri/`. Rootless Podman uses `crun` to preserve your
@@ -23,24 +24,28 @@ a desktop terminal without `sudo`:
 ./local-dev.sh
 ```
 
-The default image uses Alpine **3.23**, Hyprland **0.51.1-r1** and Koya
-**0.5.3-r888**. The first run builds the image and the shell's native development
-components. Later runs reuse image layers and rebuild changed native sources.
+The default image uses Alpine **3.24**, Hyprland **0.54.3-r0** and the latest
+Koya release available in its repository. Each run refreshes the image so it
+can install the current release, and rebuilds changed native sources.
 The checkout is mounted at `/work/koya-phone`, so JavaScript and asset changes
 are available immediately; press **F5** to reload the UI.
 
-Choose another published Koya release or resolve the current publication:
+Pass session options after `--`:
 
 ```bash
-./local-dev.sh --koya-version 0.5.3-r888
-./local-dev.sh --koya-version latest -- --size 540x1170
+./local-dev.sh -- --size 540x1170
 ```
 
-`latest` disables image build caching so a newer release can be downloaded.
-Koya and both plugins use the same version, and require build 888 or newer.
-Use `--hyprland-version` for another 0.51.x version available in Alpine 3.23's
-repositories. Changing the Alpine base or Hyprland's minor version requires
-editing `dev/Containerfile` and checking configuration compatibility.
+`--koya-version VERSION` requests a specific APK version, provided it is still
+available in the repository. The default `latest` disables image build caching
+so a newer release can be installed. Koya and both plugins use the same version,
+and require build 888 or newer.
+Use `--hyprland-version` for another 0.54.x version available in Alpine 3.24's
+repositories. The generated development configuration translates the phone's
+0.51 rules to 0.54 syntax. Aquamarine **0.12.0** in this image includes the
+nested Wayland frame-callback fix that prevents redraws stalling until focus
+changes. Changing the Alpine base or Hyprland's minor version requires editing
+`dev/Containerfile` and checking configuration compatibility.
 
 To skip the image build, or also skip rebuilding unchanged native components:
 
@@ -62,7 +67,7 @@ mode. The image includes Mesa drivers for Intel/AMD GPUs; proprietary NVIDIA
 drivers need additional container integration.
 
 Container builds and logs stay in `dev/.build/container/`, separately from
-host builds. Installed Koya versions and APK checksums are recorded in the image
+host builds. The image records installed Koya package versions and the repository
 at `/usr/local/share/koya-release.txt`. Exit with **F12** or Ctrl+C; the temporary
 container is removed while the image, checkout and logs are retained.
 
@@ -75,7 +80,8 @@ runner can also run directly on the host.
 
 - A Linux Wayland desktop with working GPU rendering and a parent compositor
   that supports nested Hyprland's Wayland backend.
-- Hyprland **0.51.x**, matching this checkout's configuration syntax.
+- Hyprland **0.54.x**, matching the generated development configuration, with
+  Aquamarine **0.10.0 or newer** for its nested Wayland frame-callback fix.
 - An installed Koya release, build **888 or newer**, with its matching
   D-Bus/process plugins and engine assets. The runtime must be compatible with
   your host's architecture and C library. The published Alpine APKs work in the

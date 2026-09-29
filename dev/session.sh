@@ -165,7 +165,12 @@ Exec=$run/wifi.sh
 Icon=network-wireless
 DESKTOP
     config=$run/hyprland.conf
+    # Translate the phone's 0.51 rules for the development compositor's 0.54 syntax.
     sed -e "s/monitor = , preferred, auto, 2/monitor = , $KOYA_DEV_SIZE@60, auto, 1/" \
+        -e 's/^# Koya phone shell; syntax for Hyprland 0.51.x.$/# Koya local development; syntax for Hyprland 0.54.x./' \
+        -e 's/^layerrule = noanim, /layerrule = no_anim on, match:namespace /' \
+        -e 's/^windowrule = fullscreenstate 1 0, class:/windowrule = fullscreen_state 1 0, match:class /' \
+        -e '/^[[:space:]]*disable_hyprland_qtutils_check = /d' \
         -e "s|@SHELL_COMMAND@|$run/shell.sh|" "$root/hyprland.conf.in" >"$config"
     local key action
     for key in F5 F6 F7 F8 F9 F10; do
@@ -219,7 +224,7 @@ Usage: bash dev/session.sh [options]
   --koya FILE       Installed Koya executable; default koya on PATH (or KOYA_BIN)
   --assets DIR      Engine assets; detected from the installation prefix
   --plugins DIR     Matching D-Bus/process plugins; detected from installation
-  --hyprland FILE   Hyprland 0.51.x executable; default Hyprland on PATH
+  --hyprland FILE   Hyprland 0.54.x executable; default Hyprland on PATH
   --keyboard FILE   Squeekboard executable; automatically detected if installed
   --size WxH        Nested output dimensions at scale 1; default 432x910
   --build-dir DIR   Native build directory; default dev/.build/host
@@ -257,7 +262,7 @@ command -v -- "$koya" >/dev/null || fail 'Koya is not installed; use ./local-dev
 koya=$(resolve_executable "$koya")
 hyprland=$(resolve_executable "$hyprland")
 version=$("$hyprland" --version)
-[[ "$version" =~ 0\.51\.[0-9]+ ]] || fail 'This checkout requires Hyprland 0.51.x; select it with --hyprland.'
+[[ "$version" =~ 0\.54\.[0-9]+ ]] || fail 'Local development requires Hyprland 0.54.x; select it with --hyprland.'
 binary_dir=$(dirname -- "$koya")
 if [[ -z "$assets" ]]; then
     for candidate in "$binary_dir/../share/koya/assets" /usr/share/koya/assets; do

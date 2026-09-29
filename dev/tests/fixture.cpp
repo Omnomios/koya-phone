@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
         g_main_loop_run(loop); close(fd); unlink(argv[2]); return 0;
     }
     if (argc > 1 && !strcmp(argv[1], "--hyprland")) {
-        if (argc > 2 && !strcmp(argv[2], "--version")) { g_print("Hyprland 0.51.1 (IPC fixture)\n"); return 0; }
+        if (argc > 2 && !strcmp(argv[2], "--version")) { g_print("Hyprland 0.54.3 (IPC fixture)\n"); return 0; }
         if (argc > 2 && !strcmp(argv[2], "--verify-config")) { g_print("config ok\n"); return 0; }
         const char *run = g_getenv("KOYA_DEV_RUN");
         if (!run || argc != 4 || strcmp(argv[2], "--config")) return 1;

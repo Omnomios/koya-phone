@@ -31,9 +31,9 @@ packages. Run as your graphical login user with `curl` and access to `sudo` or
 curl -fsSL https://raw.githubusercontent.com/Omnomios/koya-phone/master/install.sh | sh
 ```
 
-The installer downloads dependencies, builds the shell and starts the new
-Koya/Hyprland session. **Save your work first: installation replaces the current
-graphical session.** Firefox and Alacritty are included by default.
+The installer installs Koya from its signed Alpine repo, builds the shell and
+starts the new Koya/Hyprland session. **Save your work first: installation replaces
+the current graphical session.** Firefox and Alacritty are included by default.
 
 See the [installation guide](docs/installation.md) for options, troubleshooting
 and the [OnePlus 6 battery fix](docs/installation.md#oneplus-6-battery-gauge-workaround).
@@ -46,7 +46,8 @@ Run the checkout in a nested Hyprland window on a Linux Wayland desktop:
 ./local-dev.sh
 ```
 
-The container uses Alpine with pinned Hyprland and verified Koya release packages.
+The container uses Alpine with pinned Hyprland and the latest Koya packages
+from its signed repository.
 It mounts the checkout for live UI edits and uses private services for phone
 features. Press **F5** to restart after editing the UI. Podman or Docker, a
 Wayland desktop and access to a GPU render device are required.

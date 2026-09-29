@@ -5,9 +5,20 @@ shell_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 test_dir=$(mktemp -d /tmp/koya-install-test.XXXXXX)
 trap 'rm -rf "$test_dir"' 0
 export TEST_INSTALL_ROOT="$shell_root" TEST_INSTALL_DIR="$test_dir"
-mkdir "$test_dir/fixtures"
+mkdir -p "$test_dir/fixtures/apk/keys" "$test_dir/fixtures/koya"
+touch "$test_dir/fixtures/koya/koya" "$test_dir/fixtures/koya/dbus.so" \
+    "$test_dir/fixtures/koya/process.so" "$test_dir/fixtures/koya/font.ttf"
 sed '$d' "$shell_root/install.sh" |
-    sed "s|/etc/koya-shell/hyprland.conf|$test_dir/fixtures/hyprland.conf|g; s|/etc/conf.d/tinydm|$test_dir/fixtures/tinydm|g; s|/proc/|$test_dir/fixtures/proc/|g; s|/sys/fs/cgroup|$test_dir/fixtures/cgroup|g" >"$test_dir/library.sh"
+    sed -e "s|/etc/koya-shell/hyprland.conf|$test_dir/fixtures/hyprland.conf|g" \
+        -e "s|/etc/conf.d/tinydm|$test_dir/fixtures/tinydm|g" \
+        -e "s|/proc/|$test_dir/fixtures/proc/|g" \
+        -e "s|/sys/fs/cgroup|$test_dir/fixtures/cgroup|g" \
+        -e "s|/etc/apk/|$test_dir/fixtures/apk/|g" \
+        -e "s|/usr/bin/koya|$test_dir/fixtures/koya/koya|g" \
+        -e "s|/usr/lib/libhx-dbus.so|$test_dir/fixtures/koya/dbus.so|g" \
+        -e "s|/usr/lib/libhx-process.so|$test_dir/fixtures/koya/process.so|g" \
+        -e "s|/usr/share/koya/assets/fonts/SourceSans3-Regular.ttf|$test_dir/fixtures/koya/font.ttf|g" \
+        >"$test_dir/library.sh"
 sh -n "$shell_root/install.sh"
 sh "$shell_root/install.sh" --help >/dev/null
 if sh "$shell_root/install.sh" --unknown >/dev/null 2>&1; then exit 1; fi
@@ -93,22 +104,47 @@ cleanup_graphical_sessions
 printf '0::/\n' >"$TEST_INSTALL_DIR/fixtures/proc/101/cgroup"
 if (capture_graphical_sessions); then exit 1; fi
 
-# Exercise the real download/signature flow using fake artifacts. Failed key
-# fingerprints or detached signatures must abort before installation can occur.
+# Run each repository installation in a fresh shell so APK errors exercise
+# the installer's normal set -e behavior. All privileged writes are private.
+cat >"$TEST_INSTALL_DIR/repository-case.sh" <<'REPOSITORY'
+#!/bin/sh
+set -eu
+. "$TEST_INSTALL_DIR/library.sh"
+mode=$1
+work=$TEST_INSTALL_DIR/repository-$mode
+mkdir "$work"
+source_dir=$TEST_INSTALL_ROOT
+arch=aarch64; download_base=https://example.invalid/downloads
+koya_version=latest
+case "$mode" in
+    pinned) koya_version=9.8.7-r9999 ;;
+    outdated) koya_version=0.5.3-r887 ;;
+    invalid) koya_version=not-a-version ;;
+esac
+printf 'hyprland~0.51\ncurl\ngnupg\n' >"$work/packages"
+printf 'https://example.invalid/postmarketos\n' >"$TEST_INSTALL_DIR/fixtures/apk/repositories"
+rm -f "$TEST_INSTALL_DIR/fixtures/apk/keys/koya-apk.rsa.pub"
+if [ "$mode" = configured ]; then
+    printf 'v3 @koya %s\n' "$KOYA_REPOSITORY" >>"$TEST_INSTALL_DIR/fixtures/apk/repositories"
+fi
 fetch() {
+    printf '%s\n' "$1" >>"$work/fetch.calls"
     case "$1" in
-        */install/index.html) printf '<a href="/downloads/koya-0.5.3-r888.aarch64.apk">apk</a>\n' >"$2" ;;
-        *) printf 'offline artifact\n' >"$2" ;;
+        */koya-packages.pub|*/koya-apk.rsa.pub|*/koya-apk.rsa.pub.sig) printf 'offline key\n' >"$2" ;;
+        *) printf 'Unexpected download: %s\n' "$1" >&2; exit 1 ;;
     esac
 }
 gpg() {
+    printf '%s\n' "$*" >>"$work/gpg.calls"
     case " $* " in
         *' show-only '*)
-            printf 'pub:::::::::\nfpr:::::::::%s:\n' "${TEST_KEY:-$KOYA_KEY}"
-            [ "${TEST_EXTRA_KEY:-0}" = 0 ] || printf 'pub:::::::::\nfpr:::::::::HISTORICAL_KEY:\n'
+            key=$KOYA_KEY
+            [ "$mode" != wrong-key ] || key=WRONG
+            printf 'pub:::::::::\nfpr:::::::::%s:\n' "$key"
+            printf 'pub:::::::::\nfpr:::::::::HISTORICAL_KEY:\n'
             ;;
         *' --export '*)
-            [ "${TEST_KEY:-$KOYA_KEY}" = "$KOYA_KEY" ]
+            [ "$mode" != wrong-key ]
             printf 'pinned key only\n'
             ;;
         *' --import '*)
@@ -116,30 +152,76 @@ gpg() {
                 *"$work/gnupg"*) [ "$(cat "$work/koya-key.gpg")" = 'pinned key only' ] ;;
             esac
             ;;
-        *' --verify '*) [ "${TEST_BAD_SIGNATURE:-0}" = 0 ] ;;
+        *' --verify '*) [ "$mode" != bad-signature ] ;;
         *) : ;;
     esac
 }
-arch=aarch64; download_base=https://example.invalid/downloads
-if (koya_version=0.5.2-r886; get_koya); then exit 1; fi
-work=$TEST_INSTALL_DIR/download-good; mkdir "$work"
-koya_version=latest
-get_koya
-[ "$koya_version" = 0.5.3-r888 ]
-[ "$(find "$work/downloads" -name '*.apk' | wc -l)" = 3 ]
-[ "$(wc -l <"$work/SHA256SUMS")" = 3 ]
-work=$TEST_INSTALL_DIR/download-key-bundle; mkdir "$work"
-(TEST_EXTRA_KEY=1; koya_version=0.5.3-r888; get_koya)
-work=$TEST_INSTALL_DIR/download-bad-key; mkdir "$work"
-if (TEST_KEY=WRONG; koya_version=0.5.3-r888; get_koya); then exit 1; fi
-work=$TEST_INSTALL_DIR/download-bad-signature; mkdir "$work"
-if (TEST_BAD_SIGNATURE=1; koya_version=0.5.3-r888; get_koya); then exit 1; fi
+as_root() { "$@"; }
+apk() {
+    printf '%s\n' "$*" >>"$work/apk.calls"
+    case " $* " in
+        *' --allow-untrusted '*) exit 1 ;;
+        *' update '*)
+            [ "$mode" != update-failure ] || [ ! -f "$TEST_INSTALL_DIR/fixtures/apk/keys/koya-apk.rsa.pub" ] ;;
+        *'@koya'*)
+            [ -f "$TEST_INSTALL_DIR/fixtures/apk/keys/koya-apk.rsa.pub" ]
+            grep -Fxq "v3 @koya $KOYA_REPOSITORY" "$TEST_INSTALL_DIR/fixtures/apk/repositories"
+            [ "$mode" != unavailable ] ;;
+        ' info -v -e hyprland ') printf 'hyprland-0.51.1-r1\n' ;;
+        ' info -v -e koya helix-plugin-dbus helix-plugin-process ')
+            printf 'koya-9.8.7-r9999\nhelix-plugin-dbus-9.8.7-r9999\nhelix-plugin-process-9.8.7-r9999\n' ;;
+        *) : ;;
+    esac
+}
+koya() { printf 'fixture Koya\n'; }
+install_packages
+REPOSITORY
+for mode in latest pinned configured wrong-key bad-signature outdated invalid update-failure unavailable; do
+    output=$TEST_INSTALL_DIR/repository-$mode.output
+    if sh "$TEST_INSTALL_DIR/repository-case.sh" "$mode" >"$output" 2>&1; then
+        case "$mode" in latest|pinned|configured) ;; *) cat "$output" >&2; exit 1 ;; esac
+        case_work=$TEST_INSTALL_DIR/repository-$mode
+        [ "$(cat "$TEST_INSTALL_DIR/fixtures/apk/keys/koya-apk.rsa.pub")" = 'offline key' ]
+        [ "$(grep -c '^v3 @koya ' "$TEST_INSTALL_DIR/fixtures/apk/repositories")" = 1 ]
+        grep -Fxq 'https://example.invalid/postmarketos' "$TEST_INSTALL_DIR/fixtures/apk/repositories"
+        [ "$(wc -l <"$case_work/fetch.calls")" = 3 ]
+        grep -q -- "--export $KOYA_KEY" "$case_work/gpg.calls"
+        grep -q -- '--verify .*koya-apk.rsa.pub.sig .*koya-apk.rsa.pub' "$case_work/gpg.calls"
+        [ "$(grep -cx update "$case_work/apk.calls")" = 2 ]
+        if [ "$mode" = pinned ]; then
+            packages='koya@koya=9.8.7-r9999 helix-plugin-dbus@koya=9.8.7-r9999 helix-plugin-process@koya=9.8.7-r9999'
+        else
+            packages='koya@koya>=0.5.3-r888 helix-plugin-dbus@koya helix-plugin-process@koya'
+        fi
+        grep -Fxq "add --simulate --upgrade hyprland~0.51 curl gnupg $packages" "$case_work/apk.calls"
+        grep -Fxq "add --upgrade hyprland~0.51 curl gnupg $packages" "$case_work/apk.calls"
+        grep -Fxq 'koya-9.8.7-r9999' "$case_work/koya-installed"
+    else
+        case "$mode" in
+            wrong-key) grep -q 'fingerprint does not match' "$output" ;;
+            bad-signature) grep -q 'Bad signature: Koya Alpine repository key' "$output" ;;
+            outdated) grep -q 'build 888 or newer' "$output" ;;
+            invalid) grep -q 'APK version available' "$output" ;;
+            update-failure|unavailable) ;;
+            *) cat "$output" >&2; exit 1 ;;
+        esac
+        case_work=$TEST_INSTALL_DIR/repository-$mode
+        if grep -q '^add --upgrade' "$case_work/apk.calls"; then exit 1; fi
+        [ ! -f "$case_work/koya-installed" ]
+        case "$mode" in
+            update-failure|unavailable) ;;
+            *)
+                [ ! -f "$TEST_INSTALL_DIR/fixtures/apk/keys/koya-apk.rsa.pub" ]
+                [ "$(cat "$TEST_INSTALL_DIR/fixtures/apk/repositories")" = 'https://example.invalid/postmarketos' ] ;;
+        esac
+    fi
+done
 
 # Phone deployment contains the application and device tooling, while dev
 # environments and checks stay in the checkout. Mock compilation only here.
 work=$TEST_INSTALL_DIR/deployment-work; mkdir "$work"
-cp "$TEST_INSTALL_DIR/download-good/SHA256SUMS" "$work/SHA256SUMS"
-login_user=fixture; ref=master; koya_version=0.5.3-r888
+cp "$TEST_INSTALL_DIR/repository-latest/koya-installed" "$work/koya-installed"
+login_user=fixture; ref=master; koya_version=latest; arch=aarch64
 as_login() {
     if [ "$1" = meson ]; then
         case "$2" in
@@ -158,10 +240,14 @@ prepare_deployment
 [ -f "$release/native/session.cpp" ]
 [ -f "$release/install/fix-battery-gauge.sh" ]
 [ -f "$release/scripts/run-hyprland-shell.sh" ]
+grep -Fxq "repository=$KOYA_REPOSITORY" "$release/install-record.txt"
+grep -Fxq 'koya-9.8.7-r9999' "$release/install-record.txt"
+grep -Fxq 'helix-plugin-dbus-9.8.7-r9999' "$release/install-record.txt"
+grep -Fxq 'helix-plugin-process-9.8.7-r9999' "$release/install-record.txt"
 [ ! -e "$release/dev" ]
 [ ! -e "$release/tests" ]
 [ ! -e "$release/install/tests" ]
 [ ! -e "$release/native/local-dev-services.cpp" ]
 CHECK
 sh "$test_dir/check.sh"
-printf 'PASS: offline installer manifests, config preservation, startup deduplication, graphical cgroup cleanup, signatures and deployment boundaries\n'
+printf 'PASS: offline installer manifests, config preservation, startup deduplication, graphical cgroup cleanup, signed repository installation and deployment boundaries\n'

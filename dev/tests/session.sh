@@ -79,6 +79,9 @@ set -euo pipefail
 [[ -L "$KOYA_DEV_SOURCE/apps" && -L "$KOYA_DEV_SOURCE/build" ]]
 [[ ! -v KOYA_TEST_HAPTICS && ! -v HYPRLAND_INSTANCE_SIGNATURE && ! -v DISPLAY ]]
 grep -q 'monitor = , 432x910@60, auto, 1' "$3"
+grep -Fxq 'layerrule = no_anim on, match:namespace ^koya-.*$' "$3"
+grep -Fxq 'windowrule = fullscreen_state 1 0, match:class .*' "$3"
+! grep -q 'disable_hyprland_qtutils_check' "$3"
 grep -q 'F5, exec,' "$3"
 grep -q 'F12, exit,' "$3"
 grep -q 'suspend-seconds=0' "$KOYA_DEV_SOURCE/session.conf"

@@ -5,7 +5,7 @@
 | Shell application | `apps/`, `assets/`, `native/`, `applications/` | UI, native coordinator, compositor adapter and desktop integration |
 | Phone runtime | `scripts/`, `run.sh`, `start-hyprland.sh`, `hyprland.conf.in`, `session.conf` | Start and configure the installed shell |
 | Phone deployment | `install.sh`, `install/` | Bootstrap postmarketOS, declare packages, deploy the shell and maintain device setup |
-| Development environment | `dev/`, `local-dev.sh` | Alpine image, release downloads, nested session, mock services, asset tools and development checks |
+| Development environment | `dev/`, `local-dev.sh` | Alpine image, Koya repository setup, nested session, mock services, asset tools and development checks |
 | Application build and checks | Root `meson.build`, `meson_options.txt`, `tests/` | Build and test the phone application |
 
 The public development entry point is `./local-dev.sh`. It delegates to `dev/`.

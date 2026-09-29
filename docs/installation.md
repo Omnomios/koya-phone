@@ -13,8 +13,11 @@ audio and internet access.
 | Device | OnePlus 6 (`enchilada`); other devices use a generic profile and need working hardware support |
 | Installer access | `curl` and permission to use `sudo` or `doas`, or a root shell |
 
-The installer installs its build tools, Koya and other dependencies. It retains
-existing repository branches and device configuration.
+The installer installs its build tools, Koya and other dependencies. It adds the
+signed [Koya Alpine repository](https://www.koya-ui.com/repository/alpine) with the
+`@koya` tag and authenticates its APK key against the pinned Koya signing key.
+`apk` verifies the repository index and packages. Existing distribution repository
+branches and device configuration are retained.
 
 ## Install
 
@@ -44,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/Omnomios/koya-phone/master/install.
 | `--user USER` | Select the non-root graphical user when installing from a root shell |
 | `--prefix DIRECTORY` | Choose an installation directory within that user's home |
 | `--ref REF` | Install a particular source branch, tag or commit |
-| `--koya-version VERSION` | Choose a matching Koya package release |
+| `--koya-version VERSION` | Choose a version still available in the Koya repo; default `latest` |
 | `--help` | Show all options |
 
 To install from a downloaded checkout, run `sh ./install.sh --source-dir .`.
@@ -53,8 +56,10 @@ To install from a downloaded checkout, run `sh ./install.sh --source-dir .`.
 
 The default installation directory is `~/.local/share/koya-shell/`. Its `current`
 symlink selects the active release. To update, rerun the installation command.
-Existing `session.conf` and Hyprland settings are preserved. Older releases remain
-in the `releases` directory.
+This installs the latest available Koya and matching plugins, unless a version is
+specified. Existing `session.conf` and Hyprland settings are preserved. Older
+shell releases remain in the `releases` directory; each release's
+`install-record.txt` records the repository and installed Koya package versions.
 
 Edit `~/.local/share/koya-shell/current/session.conf` to change screen timeouts,
 volume, brightness and vibration. Display settings are in

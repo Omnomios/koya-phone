@@ -63,7 +63,7 @@ export async function dead(pid) {
   if (!pid || !Process.exists('/proc/' + pid + '/stat')) return true;
   try { return (await read('/proc/' + pid + '/stat')).split(') ')[1].startsWith('Z '); } catch (_) { return true; }
 }
-export async function kill(pid, signal = 'KILL') { await Process.exec('kill -' + signal + ' -- ' + Number(pid)); }
+export async function kill(pid, signal = 'KILL') { await Process.exec('kill -' + signal + ' ' + Number(pid)); }
 export function run(test) {
   return () => {
     assert(typeof Bus.exportObject === 'function' && typeof Bus.emitSignal === 'function', 'Koya D-Bus plugin lacks service export support');
