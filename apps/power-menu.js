@@ -42,7 +42,7 @@ export default async () => {
   let status;
   const buttons = [];
   const busy = () => closing || requesting || state.PowerMenuState === 'pending';
-  const available = index => !busy() && (!ACTIONS[index].method || state[ACTIONS[index].capability] === 'yes');
+  const available = index => !busy() && (!ACTIONS[index].method || ['yes', 'challenge'].includes(state[ACTIONS[index].capability]));
   const setMessage = async value => {
     if (value === messageText) return;
     messageText = value;
@@ -141,8 +141,24 @@ export default async () => {
       requesting = true;
       await paint();
       await setMessage(action.pending);
-      try { await call(action.method); }
+      const challenge = state[action.capability] === 'challenge';
+      try {
+        if (challenge) {
+          // A layer-shell overlay sits above normal application windows. Let
+          // polkit's password dialog receive both input and visible pixels.
+          await UI.setEnabled(win, root, false);
+          await Compositor.setKeyboardInteractivity(win, 'none');
+          await Compositor.setPointerEvents(win, false);
+          await new Promise(resolve => setTimeout(resolve, 34));
+        }
+        await call(action.method);
+      }
       catch (error) {
+        if (challenge) {
+          await UI.setEnabled(win, root, true);
+          await Compositor.setKeyboardInteractivity(win, 'exclusive');
+          await Compositor.setPointerEvents(win, true);
+        }
         requesting = false;
         await paint();
         await buttons[index].motion.play('notice');
@@ -258,7 +274,7 @@ export default async () => {
     await paint();
     if (busy()) return;
     if (state.LastError) await setMessage('Action unavailable');
-    else if (state.CanPowerOff !== 'yes' && state.CanReboot !== 'yes') await setMessage('Power actions unavailable');
+    else if (!['yes', 'challenge'].includes(state.CanPowerOff) && !['yes', 'challenge'].includes(state.CanReboot)) await setMessage('Power actions unavailable');
   });
   return win;
 };

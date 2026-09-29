@@ -24,6 +24,16 @@ to its window. Use **Desktops** to switch between apps or close their windows.
 The keyboard appears automatically in compatible text fields. Use the keyboard
 button when an app does not open it automatically.
 
+## Authentication
+
+Apps that request administrator access through polkit open a password dialog in
+the graphical session, including Power off and Restart when authorization is
+required. SSH from a terminal or app launched by Koya uses a
+graphical askpass dialog when it needs a password or key passphrase. For a
+graphical `sudo` prompt, use `sudo -A`; ordinary `sudo` in a terminal still
+reads from that terminal. Incoming SSH logins authenticate on the remote client,
+so they do not open a prompt on the phone.
+
 ## Wi-Fi
 
 Open **Wi-Fi** from the notification panel or app launcher.

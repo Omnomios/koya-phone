@@ -884,6 +884,7 @@ class Session {
         GDBusMethodInvocation*i;
         bool reboot;
         unsigned generation;
+        bool interactive = false;
     };
     void action(GDBusMethodInvocation*i, bool reboot) {
         if (!active || pending || menu != "open" || !caller_is(i, overlay())) {
@@ -904,8 +905,9 @@ class Session {
             if (v) {
                 g_variant_get(v, "(&s)", &cap);
             }
-            bool allowed = !strcmp(cap, "yes") && a->s->active && a->generation == a->s->login_generation && !a->s->stopping;
-            std::string why = e ? e->message : (!strcmp(cap, "challenge") ? "Authentication is required; no authentication agent is available" : "Action is unavailable in this session");
+            a->interactive = !strcmp(cap, "challenge");
+            bool allowed = (!strcmp(cap, "yes") || a->interactive) && a->s->active && a->generation == a->s->login_generation && !a->s->stopping;
+            std::string why = e ? e->message : "Action is unavailable in this session";
             if (v) {
                 g_variant_unref(v);
             }
@@ -914,8 +916,9 @@ class Session {
                 a->s->finish_action(a, why.c_str());
                 return;
             }
-            g_dbus_connection_call(a->s->system, LOGIN, LOGIN_PATH, MANAGER, a->reboot ? "Reboot" : "PowerOff", g_variant_new("(b)", FALSE),
-            nullptr, G_DBUS_CALL_FLAGS_NONE, 10000, nullptr, [](GObject * o, GAsyncResult * r, gpointer p) {
+            g_dbus_connection_call(a->s->system, LOGIN, LOGIN_PATH, MANAGER, a->reboot ? "Reboot" : "PowerOff", g_variant_new("(b)", a->interactive),
+            nullptr, a->interactive ? G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION : G_DBUS_CALL_FLAGS_NONE,
+            a->interactive ? 120000 : 10000, nullptr, [](GObject * o, GAsyncResult * r, gpointer p) {
                 auto*a = static_cast<Action*>(p);
                 GError*e = nullptr;
                 GVariant*v = g_dbus_connection_call_finish(G_DBUS_CONNECTION(o), r, &e);

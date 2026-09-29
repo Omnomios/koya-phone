@@ -263,10 +263,21 @@ prepare_deployment() {
 prepare_session_files() {
     awk -v command="$prefix/current/scripts/run-hyprland-shell.sh" \
         '{sub(/@SHELL_COMMAND@/, command); print}' "$release/hyprland.conf.in" >"$work/hyprland.conf"
-    # Preserve compositor tuning on reruns, replacing only our startup command.
+    # Preserve compositor tuning on reruns. Add only missing authentication
+    # wiring, leaving any custom askpass helper or policy agent in place.
     if [ -f /etc/koya-shell/hyprland.conf ]; then
         awk -v command="$prefix/current/scripts/run-hyprland-shell.sh" \
-            '/^[[:space:]]*exec-once[[:space:]]*=.*run-hyprland-shell\.sh/ {if (!found) print "exec-once = exec " command; found=1; next} {print} END {if (!found) print "exec-once = exec " command}' \
+            '/^[[:space:]]*exec-once[[:space:]]*=.*run-hyprland-shell\.sh/ {if (!shell) print "exec-once = exec " command; shell=1; next} \
+             /^[[:space:]]*exec-once[[:space:]]*=.*(polkit|policykit)/ {agent=1} \
+             /^[[:space:]]*env[[:space:]]*=[[:space:]]*SSH_ASKPASS,/ {ssh=1} \
+             /^[[:space:]]*env[[:space:]]*=[[:space:]]*SSH_ASKPASS_REQUIRE,/ {ssh_require=1} \
+             /^[[:space:]]*env[[:space:]]*=[[:space:]]*SUDO_ASKPASS,/ {sudo=1} \
+             {print} \
+             END {if (!shell) print "exec-once = exec " command; \
+                  if (!agent) print "exec-once = /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1"; \
+                  if (!ssh) print "env = SSH_ASKPASS,/usr/lib/ssh/gtk-ssh-askpass"; \
+                  if (!ssh_require) print "env = SSH_ASKPASS_REQUIRE,force"; \
+                  if (!sudo) print "env = SUDO_ASKPASS,/usr/lib/ssh/gtk-ssh-askpass"}' \
             /etc/koya-shell/hyprland.conf >"$work/hyprland.conf"
     fi
     chmod 0644 "$work/hyprland.conf"

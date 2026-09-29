@@ -55,6 +55,7 @@ export default run(async () => {
   mock = fixture('login'); await waitState(s => s.Active);
   await call('ShowPowerMenu'); await waitState(s => s.PowerMenuState === 'open');
   await login(true, 'challenge'); await denied(() => action('PowerOff')); assert((await state()).PowerMenuState === 'open');
+  equal(await Bus.call('org.freedesktop.login1', '/org/freedesktop/login1', 'org.koya.Test.Login', 'Attempts'), ['PowerOff:true']);
   await login(true, 'yes', true); await denied(() => action('Reboot')); assert((await state()).LastError.includes('Test inhibitor'));
   await login(); await action('Reboot'); assert((await state()).PowerMenuState === 'pending'); await denied(() => action('PowerOff'));
   equal(await actions(), ['Reboot']);

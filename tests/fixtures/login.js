@@ -2,7 +2,7 @@ import { Bus, Process, typed, serve, properties, changed, own, start } from './s
 const root = '/org/freedesktop/login1', path = root + '/session/test';
 const iface = 'org.freedesktop.login1.Session';
 let active = true, capability = 'yes', reject = false;
-const actions = [], feedback = [];
+const actions = [], attempts = [], feedback = [];
 const props = { [iface]: { Active: typed('b', true) } };
 export default start(async () => {
   properties(path, props);
@@ -10,7 +10,12 @@ export default start(async () => {
     if (call.member === 'GetSessionByPID') return call.reply('o', path);
     if (call.member.startsWith('Can')) return call.reply('s', capability);
     if (!['PowerOff', 'Reboot'].includes(call.member)) return call.error('org.freedesktop.DBus.Error.UnknownMethod', call.member);
-    if (call.args[0] !== false) throw new Error('Never request interactive authorization');
+    attempts.push(call.member + ':' + call.args[0]);
+    if (capability === 'challenge') {
+      if (call.args[0] !== true) throw new Error('Authentication was not requested');
+      return call.error('org.freedesktop.PolicyKit1.Error.Cancelled', 'Authentication cancelled');
+    }
+    if (call.args[0] !== false) throw new Error('Unexpected authentication request');
     if (reject) return call.error('org.freedesktop.login1.Inhibited', 'Test inhibitor');
     actions.push(call.member); call.reply('');
   });
@@ -25,6 +30,7 @@ export default start(async () => {
   });
   serve(root, 'org.koya.Test.Login', call => {
     if (call.member === 'Actions') return call.reply('as', actions);
+    if (call.member === 'Attempts') return call.reply('as', attempts);
     if (call.member !== 'Set' || call.signature !== 'bsb') return call.error('org.freedesktop.DBus.Error.InvalidArgs', 'Expected Set(bsb)');
     [active, capability, reject] = call.args;
     props[iface].Active = typed('b', active); changed(path, iface, props[iface]); call.reply('');

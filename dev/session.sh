@@ -183,6 +183,7 @@ DESKTOP
         -e 's/^# Koya phone shell; syntax for Hyprland 0.51.x.$/# Koya local development; syntax for Hyprland 0.54.x./' \
         -e 's/^layerrule = noanim, /layerrule = no_anim on, match:namespace /' \
         -e 's/^windowrule = fullscreenstate 1 0, class:/windowrule = fullscreen_state 1 0, match:class /' \
+        -e '/^exec-once = \/usr\/lib\/polkit-gnome\/polkit-gnome-authentication-agent-1$/d' \
         -e '/^[[:space:]]*disable_hyprland_qtutils_check = /d' \
         -e "s|@SHELL_COMMAND@|$run/shell.sh|" "$root/hyprland.conf.in" >"$config"
     local key action

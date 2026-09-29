@@ -23,6 +23,8 @@ The installer sets feedbackd's `quiet` profile for the graphical user, enabling
 vibration feedback without sound.
 It installs and enables `iio-sensor-proxy` for automatic rotation and refreshes
 sensor device rules so the service detects existing devices on the first install.
+It also starts a graphical polkit agent and configures askpass dialogs for SSH
+and `sudo -A` inside the Koya session.
 
 ## Install
 

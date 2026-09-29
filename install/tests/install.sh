@@ -38,6 +38,10 @@ grep -qx firefox "$work/packages"
 grep -qx alacritty "$work/packages"
 grep -qx iio-sensor-proxy "$work/packages"
 grep -qx iio-sensor-proxy-openrc "$work/packages"
+grep -qx polkit-gnome "$work/packages"
+grep -qx openssh-askpass "$work/packages"
+grep -qx openssh-client-default "$work/packages"
+grep -qx sudo "$work/packages"
 grep -q "ensure_service iio-sensor-proxy" "$TEST_INSTALL_ROOT/install.sh"
 grep -q "subsystem-match=misc --sysname-match='fastrpc-\*'" "$TEST_INSTALL_ROOT/install.sh"
 if grep -Eq '^(python3|weston[^ ]*|wayland-dev|helix-plugins)$' "$work/packages"; then exit 1; fi
@@ -75,9 +79,17 @@ as_login() {
     esac
 }
 prepare_session_files
-[ "$(grep -c '^exec-once' "$work/hyprland.conf")" = 1 ]
+[ "$(grep -c '^exec-once' "$work/hyprland.conf")" = 2 ]
 grep -Fxq "exec-once = exec $prefix/current/scripts/run-hyprland-shell.sh" "$work/hyprland.conf"
+grep -Fxq 'exec-once = /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1' "$work/hyprland.conf"
+grep -Fxq 'env = SSH_ASKPASS,/usr/lib/ssh/gtk-ssh-askpass' "$work/hyprland.conf"
+grep -Fxq 'env = SSH_ASKPASS_REQUIRE,force' "$work/hyprland.conf"
+grep -Fxq 'env = SUDO_ASKPASS,/usr/lib/ssh/gtk-ssh-askpass' "$work/hyprland.conf"
 grep -Fq '# Keep my tuning.' "$work/hyprland.conf"
+cp "$work/hyprland.conf" "$TEST_INSTALL_DIR/fixtures/hyprland.conf"
+prepare_session_files
+[ "$(grep -c '^exec-once' "$work/hyprland.conf")" = 2 ]
+[ "$(grep -c '^env = .*ASKPASS' "$work/hyprland.conf")" = 3 ]
 grep -Fxq AUTOLOGIN_UID=10000 "$work/tinydm"
 grep -Fxq 'rc_cgroup_cleanup="yes"' "$work/tinydm"
 grep -Fxq SOME_SETTING=yes "$work/tinydm"

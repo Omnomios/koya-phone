@@ -11,6 +11,10 @@ elogind
 elogind-openrc
 polkit-elogind
 polkit-openrc
+polkit-gnome
+openssh-client-default
+openssh-askpass
+sudo
 eudev
 eudev-openrc
 iio-sensor-proxy
