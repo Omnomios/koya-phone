@@ -318,6 +318,9 @@ configure_system() {
     as_root udevadm control --reload-rules
     as_root udevadm trigger --action=change --subsystem-match=input
     as_root udevadm settle
+    # Persist vibration without sound for the graphical user, including root installs.
+    as_login dbus-run-session -- env GSETTINGS_BACKEND=dconf \
+        gsettings set org.sigxcpu.feedbackd profile quiet
 }
 capture_graphical_sessions() {
     : >"$work/graphical-sessions"

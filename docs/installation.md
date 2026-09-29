@@ -18,6 +18,8 @@ signed [Koya Alpine repository](https://www.koya-ui.com/repository/alpine) with 
 `@koya` tag and authenticates its APK key against the pinned Koya signing key.
 `apk` verifies the repository index and packages. Existing distribution repository
 branches and device configuration are retained.
+The installer sets feedbackd's `quiet` profile for the graphical user, enabling
+vibration feedback without sound.
 
 ## Install
 
