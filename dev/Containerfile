@@ -12,7 +12,7 @@ RUN apk add --no-cache \
     bash coreutils util-linux dbus glib glib-dev build-base meson ninja pkgconf \
     libevdev-dev eudev-dev curl gnupg socat \
     "hyprland=${HYPRLAND_VERSION}" squeekboard \
-    gdk-pixbuf librsvg hicolor-icon-theme font-dejavu font-source-sans \
+    gdk-pixbuf librsvg hicolor-icon-theme font-dejavu \
     mesa-dri-gallium mesa-vulkan-intel mesa-vulkan-ati mesa-vulkan-swrast
 
 COPY dev/install-koya-release.sh /opt/koya/install-release.sh

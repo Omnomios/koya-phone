@@ -1,8 +1,9 @@
 // Logical pixels at the phone's 2x compositor scale. No client-side output scaling.
-export const FONT = '/rom/fonts/SourceSans3-Regular.ttf';
-// Koya ships only the Regular weight. Heavier weights come from the system
-// font-source-sans package through Fontconfig.
-export const FONT_STRONG = 'Source Sans 3:style=Semibold';
+// Inter, bundled as separate static weights (OFL, assets/fonts). postmarketOS
+// ships Inter as a .ttc collection, and Koya loads only its first face, so
+// a Fontconfig style such as 'Inter:style=SemiBold' would render Regular.
+export const FONT = '/rom/assets/fonts/Inter-Regular.ttf';
+export const FONT_STRONG = '/rom/assets/fonts/Inter-SemiBold.ttf';
 export const WALLPAPER = '/rom/assets/earthy-green-wallpaper.png';
 export const WALLPAPER_SIZE = { x: 864, y: 1821 };
 export const BAR_HEIGHT = 40;

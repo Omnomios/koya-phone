@@ -202,7 +202,7 @@ export default async (options = {}) => {
       await UI.attach(win, list, row);
       // Every row ends in the same lock slot, so locks line up whether or not
       // the row carries Disconnect/Forget; those sit just before the slot.
-      const trailing = (network.connected ? 104 + SPACE.s : 0) + (network.saved ? 80 + SPACE.s : 0) + SPACE.s + LOCK;
+      const trailing = (network.connected ? 116 + SPACE.s : 0) + (network.saved ? 80 + SPACE.s : 0) + SPACE.s + LOCK;
       const mainWidth = width - 16 - ROW_RIGHT - trailing;
       const target = await UI.createElement(win, {
         renderable: { type: 'box', colour: CLEAR, origin: { x: 0.5, y: 0.5 } },
@@ -224,7 +224,7 @@ export default async (options = {}) => {
       await label(detail, network.name, TYPE.body + 1, detailWidth, 28);
       await label(detail, network.connected ? 'Connected' : network.saved ? 'Saved' : network.security === 'open' ? 'Open' : network.security === 'owe' ? 'Encrypted' : !network.supported ? 'Enterprise / WEP setup unavailable' : 'Password required', TYPE.caption, detailWidth, 22, network.connected ? ORANGE : MUTED);
       if (network.connected) {
-        const disconnect = await pill(win, row, 'Disconnect', 104, () => backend.disconnect(), { height: 40, labelColour: ORANGE });
+        const disconnect = await pill(win, row, 'Disconnect', 116, () => backend.disconnect(), { height: 40, labelColour: ORANGE });
         await UI.setElementId(win, disconnect, 'wifi-disconnect-' + network.path.split('/').pop());
       }
       if (network.saved) {
