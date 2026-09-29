@@ -8,6 +8,9 @@ import { icon, text, button } from './touch-ui.js';
 import { topBarStatus } from './status-model.js';
 import { createNotifications } from './notifications.js';
 import { createVolume } from './volume.js';
+import { windowLayout } from './window-layout.js';
+import { createRotation } from './rotation.js';
+import { rotationTransition } from './rotation-transition.js';
 
 const formatTime = () => {
   const now = new Date();
@@ -23,11 +26,11 @@ export default async (options = {}) => {
   const info = await Compositor.getWindowInfo(win);
   if (info.role !== 'bar') throw new Error('Top bar requires layer-shell');
   await Compositor.setClearColor(win, 0, 0, 0, 1);
-  const surface = await UI.createElement(win, { item: { size: { x: info.width, y: BAR_HEIGHT } } });
+  const surface = await UI.createElement(win, { item: { size: { x: 'auto', y: BAR_HEIGHT } } });
   await UI.attachRoot(win, surface);
   const root = await UI.createElement(win, {
     layout: { type: 'row', justifyContent: 'start', alignItems: 'center', padding: { l: GUTTER, r: GUTTER - 4, t: 0, b: 0 } },
-    item: { size: { x: info.width, y: BAR_HEIGHT } }
+    item: { size: { x: 'auto', y: BAR_HEIGHT } }
   });
   await UI.attach(win, surface, root);
   let displayed = formatTime();
@@ -49,6 +52,7 @@ export default async (options = {}) => {
       .catch(error => Log.error('Notification indicator: ' + error));
   });
   const volume = createVolume(displays[0], options.volume);
+  const rotation = createRotation(displays[0]?.display, { transition: rotationTransition(displays[0]) });
   const sleep = suspendPolicy(() => call('Suspend'), message => Log.error(message));
   bellButton = await button(win, root, '', 44, BAR_HEIGHT, () => notifications.open(), {
     colour: CLEAR, icon: '/rom/assets/launcher/bell.png', iconSize: 20,
@@ -91,7 +95,7 @@ export default async (options = {}) => {
     if (dy >= 6 && dy > dx) { drag = undefined; openPanel(); }
   };
   const target = await UI.createElement(win, {
-    item: { size: { x: info.width, y: BAR_HEIGHT } },
+    item: { size: { x: 'auto', y: BAR_HEIGHT } },
     onMouseDown: point => { drag = { x: point.x, y: point.y }; },
     onMouseMove: move,
     onMouseUp: point => { move(point); drag = undefined; },
@@ -138,9 +142,19 @@ export default async (options = {}) => {
   setTimeout(refresh, 60000 - Date.now() % 60000);
   connect('top-bar', value => {
     sleep.onState(value);
-    return Promise.all([updateStatus(value), notifications.onState(value), volume.onState(value)]);
+    return Promise.all([updateStatus(value), notifications.onState(value), volume.onState(value), rotation.onState(value)]);
   },
-    undefined, notifications.onApplications, () => notifications.start().catch(error => Log.error('Notification service: ' + error)), volume.onButton);
+    undefined, notifications.onApplications, () => Promise.all([
+      notifications.start().catch(error => Log.error('Notification service: ' + error)),
+      rotation.start().catch(error => Log.error('Orientation sensor: ' + error))
+    ]), volume.onButton);
+  windowLayout(win, async () => {
+    const display = (await Compositor.listDisplays()).find(value => value.display === displays[0].display);
+    if (!display) return;
+    const size = { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) };
+    await notifications.resize(size);
+    await volume.resize(size);
+  });
   // Read-only handle for focused screenshot/integration fixtures.
   globalThis.koyaNotifications = notifications;
   globalThis.koyaVolume = volume;

@@ -5,7 +5,8 @@ import * as Event from 'Helix/Event';
 import * as Log from 'Helix/Log';
 import { connect, call } from './session.js';
 import { WALLPAPERS, wallpaperFor, wallpaperFrame } from './wallpapers.js';
-import { configureWallpaper, wallpaperSurface } from './wallpaper-surface.js';
+import { configureWallpaper, wallpaperSurface, resizeWallpaper } from './wallpaper-surface.js';
+import { windowLayout } from './window-layout.js';
 import { haptic } from './haptics.js';
 import { button, icon, label, text, row, toggle, backdrop } from './touch-ui.js';
 import { CREAM, ORANGE, INK, CARD, TONAL, MUTED, CLEAR, alpha, BAR_HEIGHT, NAV_HEIGHT, GUTTER, SPACE, RADIUS, TYPE, HEADER_HEIGHT, TOUCH } from './theme.js';
@@ -20,6 +21,7 @@ const categories = {
   screen: { title: 'Screen & sleep',
     summary: state => 'Screen off ' + (state.IdleLockSeconds ? 'after ' + seconds(state.IdleLockSeconds) : 'never'),
     settings: [
+      { key: 'AutoRotateEnabled', title: 'Auto-rotate', boolean: true },
       { key: 'IdleLockSeconds', title: 'Screen off after', hint: 'While using the phone', choices: [0, 30, 60, 120, 300, 600], format: seconds },
       { key: 'IdleScreenSeconds', title: 'Swipe screen timeout', hint: 'While the swipe screen is visible', choices: [0, 15, 30, 60, 120], format: seconds },
       { key: 'IdleSuspendSeconds', title: 'Suspend after', hint: 'After the display switches off', choices: [0, 60, 180, 300, 600, 1800], format: seconds },
@@ -53,8 +55,9 @@ export default async () => {
   await Compositor.setClearColor(win, ...INK);
   const info = await Compositor.getWindowInfo(win);
   // Before the first configure, window info can report the whole output.
-  const size = { x: info.width, y: Math.min(info.height, requested.y) }, width = size.x - 2 * GUTTER;
-  const stageHeight = size.y - SPACE.s - HEADER_HEIGHT - STATUS;
+  const size = { x: info.width, y: Math.min(info.height, requested.y) };
+  let width = size.x - 2 * GUTTER;
+  let stageHeight = size.y - SPACE.s - HEADER_HEIGHT - STATUS;
 
   // Koya runs one animation per element at a time. Each element keeps a single
   // reusable clip; frames without a time-zero key blend from the current pose,
@@ -92,29 +95,31 @@ export default async () => {
   const enqueue = task => { queue = queue.then(task).catch(error => Log.error('Settings UI: ' + error)); return queue; };
   const allowed = () => ready && state.Active && state.ScreenState === 'unlocked';
 
-  const root = await UI.createElement(win, { layout: { type: 'none' }, item: { size } });
+  const fill = { x: 'auto', y: 'auto' };
+  const root = await UI.createElement(win, { layout: { type: 'none' }, item: { size: fill } });
   await UI.attachRoot(win, root);
   // The live wallpaper sits dimmed behind the app, aligned with the desktop,
   // so choosing one shows the result immediately.
   const wall = await backdrop(win, root, size, BAR_HEIGHT);
-  const shell = await UI.createElement(win, host({ layout: { type: 'column' }, item: { size } }));
+  const shell = await UI.createElement(win, host({ layout: { type: 'column' }, item: { size: fill } }));
   await UI.attach(win, root, shell);
 
   // Persistent chrome: back, title and close never rebuild, they react.
   const header = await UI.createElement(win, { layout: { type: 'row', alignItems: 'center', padding: { l: GUTTER - 12, r: GUTTER, t: SPACE.s, b: 0 } },
-    item: { size: { x: size.x, y: HEADER_HEIGHT + SPACE.s } } });
+    item: { size: { x: 'auto', y: HEADER_HEIGHT + SPACE.s } } });
   await UI.attach(win, shell, header);
   const backButton = await button(win, header, '', TOUCH, HEADER_HEIGHT, () => back(), { colour: CLEAR, icon: glyph('previous'), iconSize: 22, radius: RADIUS.control });
   await UI.setElementId(win, backButton, 'settings-back');
   // Unclipped text: the title slides into the back button's slot on the home
   // page, and a clipping label would cut off the part that moves.
-  const title = await text(win, header, 'Settings', TYPE.title, width - TOUCH * 2 + 12, HEADER_HEIGHT, CREAM, undefined, 'left');
+  const title = await text(win, header, 'Settings', TYPE.title, 0, HEADER_HEIGHT, CREAM, undefined, 'left');
+  await UI.setGrow(win, title, 1);
   const closeButton = await button(win, header, '', TOUCH, HEADER_HEIGHT, () => close(), { colour: CLEAR, icon: glyph('close'), iconSize: 22, radius: RADIUS.control });
-  const statusRow = await UI.createElement(win, { layout: { type: 'row', padding: { l: GUTTER, r: GUTTER, t: 0, b: 0 } }, item: { size: { x: size.x, y: STATUS } } });
+  const statusRow = await UI.createElement(win, { layout: { type: 'row', padding: { l: GUTTER, r: GUTTER, t: 0, b: 0 } }, item: { size: { x: 'auto', y: STATUS } } });
   await UI.attach(win, shell, statusRow);
-  const status = await label(win, statusRow, '', TYPE.caption, width, STATUS, MUTED);
+  const status = await label(win, statusRow, '', TYPE.caption, 'auto', STATUS, MUTED);
   // Pages overlap on a clipped stage while they slide past each other.
-  const stage = await UI.createElement(win, { layout: { type: 'none' }, clipToBounds: true, item: { size: { x: size.x, y: stageHeight } } });
+  const stage = await UI.createElement(win, { layout: { type: 'none' }, clipToBounds: true, item: { size: { x: 'auto', y: 0 }, flexGrow: 1 } });
   await UI.attach(win, shell, stage);
 
   // Page marker for long lists. It stays in place across page turns: the
@@ -122,7 +127,7 @@ export default async () => {
   // A child of the root, attached after the shell, so it always draws above
   // the pages that transitions add to the stage inside the shell.
   const pagerBar = await UI.createElement(win, host({ layout: { type: 'row', justifyContent: 'center', alignItems: 'center' },
-    item: { position: { x: 0, y: size.y - GUTTER - TOUCH }, size: { x: size.x, y: TOUCH } } }));
+    item: { position: { x: 0, y: size.y - GUTTER - TOUCH }, size: { x: 'auto', y: TOUCH } } }));
   await UI.attach(win, root, pagerBar);
   let pagerState;
   // Arrows dim through a wrapper: the button's own press clips would
@@ -267,7 +272,7 @@ export default async () => {
     page.hint = 'Choose a wallpaper or adjust how the phone behaves';
     const wallpaper = wallpaperFor(state.Wallpaper);
     let name;
-    const hero = await navigate(page.el, 'Wallpaper', wallpaper.name, 136, () => ok() && go('wallpaper', 1), {
+    const hero = await navigate(page.el, 'Wallpaper', wallpaper.name, size.x > size.y ? 112 : 136, () => ok() && go('wallpaper', 1), {
       headingSize: TYPE.heading, lead: 52 + 12,
       leading: async target => {
         // Framed live thumbnail: it follows the wallpaper as it changes.
@@ -297,8 +302,10 @@ export default async () => {
   const wallpaperPage = async () => {
     const page = await newPage(), ok = live(page);
     page.hint = 'Tap a wallpaper to apply it';
-    const gap = SPACE.m, cardWidth = (width - gap) / 2;
-    const cardHeight = Math.min(320, (stageHeight - SPACE.xs - GUTTER - gap) / 2);
+    const gap = SPACE.m, columns = size.x > size.y ? WALLPAPERS.length : 2;
+    const rows = Math.ceil(WALLPAPERS.length / columns);
+    const cardWidth = (width - gap * (columns - 1)) / columns;
+    const cardHeight = Math.min(320, (stageHeight - SPACE.xs - GUTTER - gap * (rows - 1)) / rows);
     const inset = SPACE.s, innerWidth = cardWidth - 2 * inset;
     const cards = new Map();
     let selected = state.Wallpaper;
@@ -327,10 +334,10 @@ export default async () => {
         play(wall, [{ time: 0, opacity: 0.25 }, { time: 0.55, opacity: 1, ease: 'outCubic' }]);
       } else if (page.alive) { selected = previous; mark(previous); shake(card.frame); }
     };
-    for (let i = 0; i < WALLPAPERS.length; i += 2) {
+    for (let i = 0; i < WALLPAPERS.length; i += columns) {
       const line = await UI.createElement(win, { layout: { type: 'row', gap }, item: { size: { x: width, y: cardHeight } } });
       await UI.attach(win, page.el, line);
-      for (const wallpaper of WALLPAPERS.slice(i, i + 2)) {
+      for (const wallpaper of WALLPAPERS.slice(i, i + columns)) {
         // Layout-less frame: the card and its selection ring share its bounds.
         const frame = await UI.createElement(win, host({ item: { size: { x: cardWidth, y: cardHeight } } }));
         await UI.attach(win, line, frame);
@@ -422,8 +429,15 @@ export default async () => {
     page.hint = choice.hint || 'Choose a value';
     const values = choice.choices.includes(state[choice.key]) ? choice.choices : [state[choice.key], ...choice.choices];
     const step = CHOICE + SPACE.s;
+    const capacity = Math.max(1, Math.floor((stageHeight - SPACE.xs - GUTTER - TOUCH - SPACE.s) / step));
+    const pages = Math.ceil(values.length / capacity);
+    page.index = Math.min(pageIndex, pages - 1);
+    const start = page.index * capacity;
+    const visible = values.slice(start, start + capacity);
+    if (pages > 1) page.pager = { group: 'choice-' + choice.key, count: pages, index: page.index,
+      turn: direction => ok() && go('choice', direction, page.index + direction) };
     // Layout-less frame: a highlight slides between rows beneath the list.
-    const frame = await UI.createElement(win, { item: { size: { x: width, y: values.length * step } } });
+    const frame = await UI.createElement(win, { item: { size: { x: width, y: visible.length * step } } });
     await UI.attach(win, page.el, frame);
     const glow = await UI.createElement(win, {
       renderable: { type: 'box', colour: TONAL, cornerRadius: RADIUS.surface, cornerResolution: 16, origin: { x: 0.5, y: 0.5 },
@@ -431,29 +445,30 @@ export default async () => {
       item: { size: { x: width, y: CHOICE } }, contentAlign: { x: 'start', y: 'start' }, contentPositioning: 'raw' });
     await UI.attach(win, frame, glow);
     await UI.setHitTarget(win, glow, false);
-    const list = await UI.createElement(win, { layout: { type: 'column', gap: SPACE.s }, item: { size: { x: width, y: values.length * step } } });
+    const list = await UI.createElement(win, { layout: { type: 'column', gap: SPACE.s }, item: { size: { x: width, y: visible.length * step } } });
     await UI.attach(win, frame, list);
     const rows = [];
     let selected = values.indexOf(state[choice.key]), busy = false;
     const moveGlow = (index, animate = true) => play(glow, animate
-      ? [{ time: 0.12, position: { x: 0, y: index * step }, scale: { x: 1.015, y: 1.08 }, opacity: 1, ease: 'outCubic' },
-        { time: 0.28, position: { x: 0, y: index * step }, scale: { x: 1, y: 1 }, opacity: 1, ease: 'inOutQuad' }]
-      : [{ time: 0, position: { x: 0, y: index * step }, opacity: 1 }]);
+      ? [{ time: 0.12, position: { x: 0, y: (index - start) * step }, scale: { x: 1.015, y: 1.08 }, opacity: 1, ease: 'outCubic' },
+        { time: 0.28, position: { x: 0, y: (index - start) * step }, scale: { x: 1, y: 1 }, opacity: 1, ease: 'inOutQuad' }]
+      : [{ time: 0, position: { x: 0, y: (index - start) * step }, opacity: 1 }]);
     const dot = (entry, on) => play(entry.dot, on
       ? [{ time: 0, scale: { x: 0, y: 0 }, opacity: 1 }, { time: 0.14, scale: { x: 1.35, y: 1.35 }, opacity: 1, ease: 'outCubic' }, { time: 0.28, scale: { x: 1, y: 1 }, opacity: 1, ease: 'inOutQuad' }]
       : [{ time: 0.12, scale: { x: 0, y: 0 }, opacity: 0, ease: 'inQuad' }]);
     const paint = async (index, animate) => {
       for (const [i, entry] of rows.entries()) {
-        const on = i === index;
+        const on = i + start === index;
         await UI.setTextColour(win, entry.label, on ? ORANGE : CREAM);
         await UI.setCircleColour(win, entry.ring, on ? ORANGE : MUTED);
         if (animate) dot(entry, on); else if (!on) await hidden(entry.dot);
       }
-      moveGlow(index, animate);
+      if (index >= start && index < start + visible.length) moveGlow(index, animate);
+      else await hidden(glow);
     };
     const pick = async index => {
       if (!ok() || busy) return;
-      const entry = rows[index];
+      const entry = rows[index - start];
       if (index === selected) { punch(entry.target, 1.02); return; }
       busy = true;
       const previous = selected;
@@ -472,7 +487,8 @@ export default async () => {
         shake(entry.target);
       }
     };
-    for (const [index, value] of values.entries()) {
+    for (const [offset, value] of visible.entries()) {
+      const index = start + offset;
       const target = await row(win, list, width, CHOICE, () => pick(index), { colour: CLEAR });
       await UI.setElementId(win, target, 'choice-' + value);
       const labelId = await label(win, target, choice.format(value), TYPE.body, width - 16 - 12 - 28 - SPACE.m, CHOICE, CREAM);
@@ -489,8 +505,8 @@ export default async () => {
       page.items.push(target);
     }
     await paint(selected, false);
-    play(glow, [{ time: 0, position: { x: 0, y: selected * step }, opacity: 0 }, { time: 0.25, position: { x: 0, y: selected * step }, opacity: 0 },
-      { time: 0.45, position: { x: 0, y: selected * step }, opacity: 1, ease: 'outCubic' }]);
+    if (selected >= start && selected < start + visible.length) play(glow, [{ time: 0, position: { x: 0, y: (selected - start) * step }, opacity: 0 }, { time: 0.25, position: { x: 0, y: (selected - start) * step }, opacity: 0 },
+      { time: 0.45, position: { x: 0, y: (selected - start) * step }, opacity: 1, ease: 'outCubic' }]);
     page.update = async () => {
       const index = values.indexOf(state[choice.key]);
       if (!busy && index >= 0 && index !== selected) { selected = index; await paint(index, true); }
@@ -504,23 +520,30 @@ export default async () => {
 
   // Forward pushes in from the right, back from the left; the outgoing page
   // drifts the other way and fades. Rows arrive in a quick stagger.
-  const transition = async (target, direction, targetPage = 0) => {
+  const transition = async (target, direction, targetPage = 0, animate = true) => {
     if (closing) return;
     section = target; pageIndex = targetPage;
     const previous = current;
+    if (previous && !animate) {
+      previous.alive = false;
+      await UI.destroyElement(win, previous.el);
+    }
     const next = await build(target);
     current = next;
     showBack(target !== 'home');
     setTitle(titleFor(target), direction);
     showHint();
     const travel = size.x * 0.28 * direction;
-    play(next.el, direction
+    if (animate) play(next.el, direction
       ? [{ time: 0, opacity: 0, position: { x: travel, y: 0 } }, { time: 0.3, opacity: allowed() ? 1 : 0.45, position: { x: 0, y: 0 }, ease: 'outCubic' }]
       : [{ time: 0, opacity: 0, position: { x: 0, y: 0 } }, { time: 0.2, opacity: allowed() ? 1 : 0.45, ease: 'outCubic' }]);
-    next.items.forEach((id, index) => rise(id, 0.05 + index * 0.035));
-    next.reveal?.();
+    else await play(next.el, [{ time: 0, opacity: allowed() ? 1 : 0.45, position: { x: 0, y: 0 } }]);
+    if (animate) {
+      next.items.forEach((id, index) => rise(id, 0.05 + index * 0.035));
+      next.reveal?.();
+    }
     await syncPager(next.pager);
-    if (previous) {
+    if (previous && animate) {
       previous.alive = false;
       play(previous.el, [{ time: 0.22, opacity: 0, position: { x: -travel * 0.6, y: 0 }, ease: 'inQuad' }]);
       setTimeout(() => UI.destroyElement(win, previous.el).catch(error => Log.error('Settings page: ' + error)), 260);
@@ -531,18 +554,36 @@ export default async () => {
     if (section === 'home' || closing) return;
     return go(section === 'choice' ? choice.section : 'home', -1, section === 'choice' ? choice.page : 0);
   };
+  // Quit straight away: Hyprland animates closing windows from their last
+  // frame. Fading our own content first left only the window's clear colour,
+  // which showed as a flat green frame before the window disappeared.
   const close = () => {
     if (closing) return;
     closing = true;
-    play(shell, [{ time: 0.16, opacity: 0, scale: { x: 0.97, y: 0.97 }, ease: 'inQuad' }]);
-    play(wall, [{ time: 0.16, opacity: 0, ease: 'inQuad' }]);
-    setTimeout(() => Engine.quit(), 180);
+    Engine.quit();
   };
 
   Event.on('keyDown', event => {
     if (event.id !== win || ![1, 27, 65307].includes(Number(event.key))) return;
     if (section === 'home') close(); else back();
   });
+
+  windowLayout(win, next => enqueue(async () => {
+    if (next.x === size.x && next.y === size.y) return;
+    await Compositor.setWindowRenderingEnabled(win, false);
+    try {
+      Object.assign(size, next);
+      width = size.x - 2 * GUTTER;
+      stageHeight = size.y - SPACE.s - HEADER_HEIGHT - STATUS;
+      await Promise.all([
+        UI.setLayoutPosition(win, pagerBar, { x: 0, y: size.y - GUTTER - TOUCH }),
+        resizeWallpaper(win, wall, { x: size.x, y: size.y + BAR_HEIGHT })
+      ]);
+      // Rotation is a relayout, so replace the page in the same frame rather
+      // than replaying navigation with overlapping old and new pages.
+      if (ready && current) await transition(section, 0, current.index || 0, false);
+    } finally { await Compositor.setWindowRenderingEnabled(win, true); }
+  }));
 
   await hidden(backButton);
   play(title, [{ time: 0, opacity: 0, position: { x: titleShift(), y: 6 } }, { time: 0.3, opacity: 1, position: { x: titleShift(), y: 0 }, ease: 'outCubic' }]);

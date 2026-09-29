@@ -25,7 +25,7 @@ const preview = (value, limit) => value.length > limit ? value.slice(0, limit - 
 
 export function createNotifications(display, onUnread = () => {}) {
   const size = { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) };
-  const width = size.x - 2 * GUTTER;
+  let width = size.x - 2 * GUTTER;
   let state = {}, center, toast, centerBoard, toastBoard, apps = [], connected = false;
   let requested = false, page = 0, banner, bannerTimer, bannerKey, centerKey, pendingBanner;
   const icons = new Map(); let iconVersion = 0;
@@ -272,7 +272,15 @@ export function createNotifications(display, onUnread = () => {}) {
     await brightness.start();
     refreshApps().catch(error => Log.error('Notification icons: ' + error));
   };
-  return { start, model, brightness, open: openCenter, close: closeCenter, onApplications: refreshApps,
+  return { start, model, brightness,
+    resize: next => enqueue(async () => {
+      if (size.x === next.x && size.y === next.y) return;
+      Object.assign(size, next); width = size.x - 2 * GUTTER;
+      for (const surface of [center, toast]) if (surface && !surface.closed) await Compositor.destroyWindow(surface.win);
+      center = toast = centerBoard = toastBoard = undefined;
+      centerKey = bannerKey = undefined;
+      await reconcile();
+    }), open: openCenter, close: closeCenter, onApplications: refreshApps,
     onState: next => {
       state = next;
       if (!unlocked() || next.DesktopView !== 'closed') requested = false;

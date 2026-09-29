@@ -33,14 +33,14 @@ are available immediately; press **F5** to reload the UI.
 Pass session options after `--`:
 
 ```bash
-./local-dev.sh -- --size 540x1170
+./local-dev.sh -- --size 1080x2340
 ```
 
 `--koya-version VERSION` requests a specific APK version, provided it is still
 available in the repository. Explicit Koya or Hyprland version options trigger
 an image build. Builds using `latest` disable image build caching to install the
 current release. Koya and both plugins use the same version,
-and require build 888 or newer.
+and require build 891 or newer.
 Use `--hyprland-version` for another 0.54.x version available in Alpine 3.24's
 repositories. The generated development configuration translates the phone's
 0.51 rules to 0.54 syntax. Aquamarine **0.12.0** in this image includes the
@@ -74,6 +74,37 @@ host builds. The image records installed Koya package versions and the repositor
 at `/usr/local/share/koya-release.txt`. Exit with **F12** or Ctrl+C; the temporary
 container is removed while the image, checkout and logs are retained.
 
+### Live rotation
+
+The private development services include an orientation sensor. From a terminal
+inside the nested session, simulate turning the phone with:
+
+```sh
+bash /work/koya-phone/dev/session.sh --control orientation left-up
+```
+
+Other values are `normal`, `bottom-up`, `right-up` and `undefined`. **Settings →
+Screen & sleep → Auto-rotate** enables or locks orientation just as on the phone.
+Hold each simulated orientation for one second before expecting a rotation.
+
+To check the buffer ordering, run `tests/capture-rotation.js` with
+`WAYLAND_DEBUG=1` in the private session and save its output to a log. Then run
+`python3 tests/check-rotation-commits.py LOG` from the checkout. It checks that
+viewport size changes on mapped windows arrive with a new buffer, including the
+wallpaper layer, rather than stretching the previous frame.
+
+Live rotation requires Koya build 891 or newer, which provides `windowResized`,
+updated layer viewports and `anchor: 'fill'` support. Rebuild an older development
+image to install the current release:
+
+```bash
+./local-dev.sh --rebuild-image
+```
+
+The image uses installed Koya release packages. A custom engine executable can
+also be selected with `-- --koya FILE --plugins DIR
+--assets DIR`; the file and directories must be accessible inside the container.
+
 ## Run on the host
 
 For an environment with dependencies already installed, the internal session
@@ -85,11 +116,11 @@ runner can also run directly on the host.
   that supports nested Hyprland's Wayland backend.
 - Hyprland **0.54.x**, matching the generated development configuration, with
   Aquamarine **0.10.0 or newer** for its nested Wayland frame-callback fix.
-- An installed Koya release, build **888 or newer**, with its matching
+- An installed Koya release, build **891 or newer**, with its matching
   D-Bus/process plugins and engine assets. The runtime must be compatible with
   your host's architecture and C library. The published Alpine APKs work in the
   container environment described above.
-- Bash, Meson, Ninja, pkg-config, a C/C++ compiler, GLib/GIO, libevdev and libudev
+- Bash, Meson, Ninja, pkg-config, a C/C++ compiler, GLib/GIO, libevdev, libudev and Wayland client
   development headers. The runtime also needs `dbus-run-session`, `gdbus`,
   `setsid`, `timeout` and `realpath`.
 - GdkPixbuf with SVG support for application icons.
@@ -119,14 +150,24 @@ bash dev/session.sh \
 
 The first run builds into `dev/.build/host/`. Subsequent runs rebuild changed
 native sources. Use `--no-build` when working only on JavaScript or assets. Use
-`--size 540x1170` to change the default 432×910 output at scale 1. `--keyboard`
-selects a Squeekboard executable outside PATH; otherwise it is detected
+`--size 1080x2340` to change the output's pixel dimensions. The default matches
+the OnePlus 6: 1080×2280 pixels at scale 2, giving Koya a 540×1140 logical display.
+The host window is half the output size (540×1140 desktop logical pixels by
+default); desktop scaling then determines its displayed size. This does not
+change the phone's resolution or UI layout. Custom output dimensions must be even.
+`--keyboard` selects a Squeekboard executable outside PATH; otherwise it is detected
 automatically. Run `bash dev/session.sh --help` for session options.
+
+The development launcher loads a small Wayland sizing helper into Hyprland to
+request the fixed half-size preview window from the parent desktop. This avoids
+Aquamarine's 1280×720 fallback overriding the monitor configuration. The helper
+does not load into Koya or its other child processes, and is not part of the
+phone build. Rebuild existing development images once to add `wayland-dev`.
 
 ## Edit and reload
 
 In the container workflow, pass session options after `--`, for example
-`./local-dev.sh -- --size 540x1170`. Native C++ changes require a rebuild and
+`./local-dev.sh -- --size 1080x2340`. Native C++ changes require a rebuild and
 relaunch; omit `--no-build` to build changed sources.
 
 Click and drag with the mouse to exercise touch interactions. JavaScript and

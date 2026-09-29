@@ -4,6 +4,7 @@ import * as Event from 'Helix/Event';
 import * as Log from 'Helix/Log';
 import { connect, call } from './session.js';
 import { clips, buttonMotion } from './motion.js';
+import { windowLayout } from './window-layout.js';
 import { haptic } from './haptics.js';
 import { text as textElement, label as labelElement } from './touch-ui.js';
 import { CREAM, INK, MUTED, DISABLED, CARD_PRESSED, GUTTER, SPACE, RADIUS, TYPE } from './theme.js';
@@ -18,7 +19,7 @@ export default async () => {
   const display = displays[0];
   if (!display) throw new Error('No display available');
   const win = await Compositor.createWindow({
-    role: 'overlay', anchor: 'top-left', display: display.display,
+    role: 'overlay', anchor: 'fill', display: display.display,
     size: { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) },
     exclusiveZone: -1, namespace: 'koya-power-menu', msaaSamples: 1, transparent: true,
     keyboardInteractivity: 'exclusive', acceptPointerEvents: true
@@ -28,16 +29,6 @@ export default async () => {
   await Compositor.setWindowRenderingEnabled(win, false);
   await Compositor.setClearColor(win, 0, 0, 0, 0);
 
-  // Portrait: full-width rows within thumb reach, icon then label. Wide
-  // displays use a row of square tiles rather than three short rows.
-  const horizontal = info.width > info.height;
-  const gap = horizontal ? 20 : SPACE.m;
-  const square = Math.floor(Math.min(160, (info.width - 48 - 2 * gap) / 3, info.height - 90));
-  const tile = horizontal ? { x: square, y: square } : { x: Math.min(420, info.width - 2 * GUTTER), y: 80 };
-  const groupWidth = horizontal ? 3 * tile.x + 2 * gap : tile.x;
-  const groupHeight = horizontal ? tile.y : 3 * tile.y + 2 * gap;
-  const iconSize = horizontal ? Math.round(square * 0.42) : 36;
-  const labelSize = horizontal ? Math.round(Math.min(22, square * 0.15)) : TYPE.heading;
   let state = {};
   let requesting = false;
   let closing = false;
@@ -103,113 +94,145 @@ export default async () => {
     closeTimer = setTimeout(finishDismiss, 600);
     await screenMotion.play('exit');
   };
-  const root = await UI.createElement(win, {
-    renderable: { type: 'box', colour: [0.015, 0.035, 0.025, 0.7] },
-    contentAlign: 'fill',
-    layout: { type: 'column', justifyContent: 'center', gap: SPACE.l,
-      padding: { l: (info.width - groupWidth) / 2, r: (info.width - groupWidth) / 2, t: 0, b: 0 } },
-    item: { size: { x: info.width, y: info.height } }
-  });
-  await UI.attachRoot(win, root);
-  await UI.setElementId(win, root, 'power-menu-root');
-  screenMotion = await clips(win, root, {
-    enter: [{ time: 0, opacity: 0 }, { time: 0.22, opacity: 1, ease: 'outCubic' }],
-    restore: [{ time: 0.16, opacity: 1, ease: 'outCubic' }],
-    exit: [{ time: 0.18, opacity: 0, ease: 'inQuad' }]
-  });
-  await screenMotion.onEnd('exit', finishDismiss);
-  await click(root, dismiss);
-  const group = await UI.createElement(win, {
-    layout: { type: horizontal ? 'row' : 'column', gap },
-    item: { size: { x: groupWidth, y: groupHeight } }
-  });
-  await UI.attach(win, root, group);
+  let root, activate;
+  const build = async () => {
+    if (root !== undefined) await UI.destroyElement(win, root);
+    buttons.length = 0;
+    // Portrait: full-width rows within thumb reach, icon then label. Wide
+    // displays use a row of square tiles rather than three short rows.
+    const horizontal = info.width > info.height;
+    const gap = horizontal ? 20 : SPACE.m;
+    const square = Math.floor(Math.min(160, (info.width - 48 - 2 * gap) / 3, info.height - 90));
+    const tile = horizontal ? { x: square, y: square } : { x: Math.min(420, info.width - 2 * GUTTER), y: 80 };
+    const groupWidth = horizontal ? 3 * tile.x + 2 * gap : tile.x;
+    const groupHeight = horizontal ? tile.y : 3 * tile.y + 2 * gap;
+    const iconSize = horizontal ? Math.round(square * 0.42) : 36;
+    const labelSize = horizontal ? Math.round(Math.min(22, square * 0.15)) : TYPE.heading;
+    root = await UI.createElement(win, {
+      renderable: { type: 'box', colour: [0.015, 0.035, 0.025, 0.7] },
+      contentAlign: 'fill',
+      layout: { type: 'column', justifyContent: 'center', gap: SPACE.l,
+        padding: { l: (info.width - groupWidth) / 2, r: (info.width - groupWidth) / 2, t: 0, b: 0 } },
+      item: { size: { x: info.width, y: info.height } }
+    });
+    await UI.attachRoot(win, root);
+    await UI.setElementId(win, root, 'power-menu-root');
+    screenMotion = await clips(win, root, {
+      enter: [{ time: 0, opacity: 0 }, { time: 0.22, opacity: 1, ease: 'outCubic' }],
+      restore: [{ time: 0.16, opacity: 1, ease: 'outCubic' }],
+      exit: [{ time: 0.18, opacity: 0, ease: 'inQuad' }]
+    });
+    await screenMotion.onEnd('exit', finishDismiss);
+    await click(root, dismiss);
+    const group = await UI.createElement(win, {
+      layout: { type: horizontal ? 'row' : 'column', gap },
+      item: { size: { x: groupWidth, y: groupHeight } }
+    });
+    await UI.attach(win, root, group);
 
-  const activate = async index => {
-    if (!available(index)) return;
-    const action = ACTIONS[index];
-    if (!action.method) {
-      try { await call('Lock'); }
-      catch (error) { await setMessage('Unable to lock'); Log.error(String(error)); }
-      return;
-    }
-    requesting = true;
-    await paint();
-    await setMessage(action.pending);
-    try { await call(action.method); }
-    catch (error) {
-      requesting = false;
-      await paint();
-      await buttons[index].motion.play('notice');
-      Log.error('Power action: ' + error);
-      await setMessage('Unable to ' + (index === 0 ? 'power off' : 'restart'));
-    }
-  };
-
-  for (const [index, action] of ACTIONS.entries()) {
-    // Koya hit-tests the fixed layout. This group is for shared visual motion,
-    // not a separate hit area; its own element receives the pointer callbacks.
-    const moving = await UI.createElement(win, { item: { size: tile } });
-    await UI.attach(win, group, moving);
-    await UI.setInheritAnimation(win, moving, true);
-    await UI.setElementId(win, moving, 'power-menu-motion-' + index);
-    const motion = await buttonMotion(win, moving, tile, index);
-    const button = await UI.createElement(win, {
-      renderable: { type: 'box', colour: INK, cornerRadius: RADIUS.surface, cornerResolution: 16 },
-      layout: horizontal ? { type: 'column', justifyContent: 'center', gap: 12 }
-        : { type: 'row', alignItems: 'center', gap: SPACE.l, padding: { l: SPACE.xl, r: SPACE.l, t: 0, b: 0 } },
-      item: { size: tile }, contentAlign: 'fill'
-    });
-    await UI.attach(win, moving, button);
-    const colourMotion = await clips(win, button, {
-      rest: [{ time: 0.18, colour: INK, ease: 'outCubic' }],
-      pressed: [{ time: 0.06, colour: CARD_PRESSED, ease: 'outQuad' }],
-      focused: [{ time: 0.12, colour: [0.15, 0.25, 0.18, 1], ease: 'outCubic' }],
-      disabled: [{ time: 0.16, colour: [0.06, 0.085, 0.07, 1], ease: 'outCubic' }]
-    });
-    const icon = await UI.createElement(win, {
-      renderable: {
-        type: 'sprite', texture: '/rom/assets/power-menu/' + action.icon + '.png', frame: 0,
-        frames: [{ size: { x: iconSize, y: iconSize }, origin: { x: 0, y: 0 },
-          aabb: { min: { x: 0, y: 0 }, max: { x: 160, y: 160 } }, colour: [1, 1, 1, 1] }]
-      },
-      item: { size: horizontal ? { x: tile.x, y: iconSize } : { x: iconSize, y: tile.y } }, contentAlign: { x: 'center', y: 'center' }
-    });
-    await UI.attach(win, button, icon);
-    const label = horizontal ? await text(button, action.label, labelSize, tile.x, 32)
-      : await text(button, action.label, labelSize, tile.x - SPACE.xl - SPACE.l * 2 - iconSize, tile.y, CREAM, 'start');
-    buttons.push({ button, label, motion, colourMotion });
-    await click(moving, async () => {
-      pressed = -1;
-      await activate(index);
-      await paint();
-    });
-    await UI.setOnMouseDown(win, moving, async () => {
+    activate = async index => {
       if (!available(index)) return;
-      haptic();
-      keyboardFocus = false;
-      pressed = index;
-      await motion.play('press');
+      const action = ACTIONS[index];
+      if (!action.method) {
+        try { await call('Lock'); }
+        catch (error) { await setMessage('Unable to lock'); Log.error(String(error)); }
+        return;
+      }
+      requesting = true;
       await paint();
-    });
-    const release = async (cancel = false) => {
-      if (pressed !== index) return;
-      pressed = -1;
-      if (!closing) await motion.play(cancel ? 'settle' : 'release');
-      await paint();
+      await setMessage(action.pending);
+      try { await call(action.method); }
+      catch (error) {
+        requesting = false;
+        await paint();
+        await buttons[index].motion.play('notice');
+        Log.error('Power action: ' + error);
+        await setMessage('Unable to ' + (index === 0 ? 'power off' : 'restart'));
+      }
     };
-    await UI.setOnMouseUp(win, moving, () => release());
-    await UI.setOnMouseExit(win, moving, () => release(true));
-  }
-  status = await text(root, messageText, TYPE.caption, groupWidth, 32, MUTED);
-  statusMotion = await clips(win, status, {
-    enter: [{ time: 0, opacity: 0, position: { x: 0, y: 12 } },
-      { time: 0.16, opacity: 0, position: { x: 0, y: 12 } },
-      { time: 0.4, opacity: 1, position: { x: 0, y: 0 }, ease: 'outCubic' }],
-    change: [{ time: 0, opacity: 0.3, position: { x: 0, y: 5 } },
-      { time: 0.18, opacity: 1, position: { x: 0, y: 0 }, ease: 'outCubic' }]
+
+    for (const [index, action] of ACTIONS.entries()) {
+      // Koya hit-tests the fixed layout. This group is for shared visual motion,
+      // not a separate hit area; its own element receives the pointer callbacks.
+      const moving = await UI.createElement(win, { item: { size: tile } });
+      await UI.attach(win, group, moving);
+      await UI.setInheritAnimation(win, moving, true);
+      await UI.setElementId(win, moving, 'power-menu-motion-' + index);
+      const motion = await buttonMotion(win, moving, tile, index);
+      const button = await UI.createElement(win, {
+        renderable: { type: 'box', colour: INK, cornerRadius: RADIUS.surface, cornerResolution: 16 },
+        layout: horizontal ? { type: 'column', justifyContent: 'center', gap: 12 }
+          : { type: 'row', alignItems: 'center', gap: SPACE.l, padding: { l: SPACE.xl, r: SPACE.l, t: 0, b: 0 } },
+        item: { size: tile }, contentAlign: 'fill'
+      });
+      await UI.attach(win, moving, button);
+      const colourMotion = await clips(win, button, {
+        rest: [{ time: 0.18, colour: INK, ease: 'outCubic' }],
+        pressed: [{ time: 0.06, colour: CARD_PRESSED, ease: 'outQuad' }],
+        focused: [{ time: 0.12, colour: [0.15, 0.25, 0.18, 1], ease: 'outCubic' }],
+        disabled: [{ time: 0.16, colour: [0.06, 0.085, 0.07, 1], ease: 'outCubic' }]
+      });
+      const icon = await UI.createElement(win, {
+        renderable: {
+          type: 'sprite', texture: '/rom/assets/power-menu/' + action.icon + '.png', frame: 0,
+          frames: [{ size: { x: iconSize, y: iconSize }, origin: { x: 0, y: 0 },
+            aabb: { min: { x: 0, y: 0 }, max: { x: 160, y: 160 } }, colour: [1, 1, 1, 1] }]
+        },
+        item: { size: horizontal ? { x: tile.x, y: iconSize } : { x: iconSize, y: tile.y } }, contentAlign: { x: 'center', y: 'center' }
+      });
+      await UI.attach(win, button, icon);
+      const label = horizontal ? await text(button, action.label, labelSize, tile.x, 32)
+        : await text(button, action.label, labelSize, tile.x - SPACE.xl - SPACE.l * 2 - iconSize, tile.y, CREAM, 'start');
+      buttons.push({ button, label, motion, colourMotion });
+      await click(moving, async () => {
+        pressed = -1;
+        await activate(index);
+        await paint();
+      });
+      await UI.setOnMouseDown(win, moving, async () => {
+        if (!available(index)) return;
+        haptic();
+        keyboardFocus = false;
+        pressed = index;
+        await motion.play('press');
+        await paint();
+      });
+      const release = async (cancel = false) => {
+        if (pressed !== index) return;
+        pressed = -1;
+        if (!closing) await motion.play(cancel ? 'settle' : 'release');
+        await paint();
+      };
+      await UI.setOnMouseUp(win, moving, () => release());
+      await UI.setOnMouseExit(win, moving, () => release(true));
+    }
+    status = await text(root, messageText, TYPE.caption, groupWidth, 32, MUTED);
+    statusMotion = await clips(win, status, {
+      enter: [{ time: 0, opacity: 0, position: { x: 0, y: 12 } },
+        { time: 0.16, opacity: 0, position: { x: 0, y: 12 } },
+        { time: 0.4, opacity: 1, position: { x: 0, y: 0 }, ease: 'outCubic' }],
+      change: [{ time: 0, opacity: 0.3, position: { x: 0, y: 5 } },
+        { time: 0.18, opacity: 1, position: { x: 0, y: 0 }, ease: 'outCubic' }]
+    });
+    await paint();
+  };
+  await build();
+  let layoutQueue = Promise.resolve();
+  windowLayout(win, size => {
+    layoutQueue = layoutQueue.then(async () => {
+      info.width = size.x; info.height = size.y;
+      if (closing || requesting) return;
+      await Compositor.setWindowRenderingEnabled(win, false);
+      try {
+        await build();
+        await screenMotion.play('restore');
+        for (const button of buttons) await button.motion.play('settle');
+        await statusMotion.play('change');
+      }
+      finally { await Compositor.setWindowRenderingEnabled(win, true); }
+    });
+    return layoutQueue;
   });
-  await paint();
   Event.on('keyDown', async ({ key, id }) => {
     if (id !== win) return;
     if ([27, 65307, 'Escape'].includes(key)) return dismiss();

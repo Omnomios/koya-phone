@@ -4,6 +4,8 @@ import * as Event from 'Helix/Event';
 import * as Log from 'Helix/Log';
 import * as Process from 'Module/process';
 import * as Assets from 'Koya/Assets';
+import { windowLayout } from './window-layout.js';
+import { resizeWallpaper } from './wallpaper-surface.js';
 import { call } from './session.js';
 import { clips } from './motion.js';
 import { text, label, button, backdrop, sheetHeader } from './touch-ui.js';
@@ -14,9 +16,9 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
   // The drawer sits between the top bar and navigation, so both stay visible
   // and live: Home dismisses it and Apps/Desktops switch or close it.
   const win = await Compositor.createWindow({
-    role: 'overlay', anchor: 'top-left', display: display.display, offset: { x: 0, y: BAR_HEIGHT },
+    role: 'overlay', anchor: 'fill', display: display.display,
     size: { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) - BAR_HEIGHT - NAV_HEIGHT },
-    exclusiveZone: -1, namespace: 'koya-desktop-view', msaaSamples: 1,
+    exclusiveZone: 0, namespace: 'koya-desktop-view', msaaSamples: 1,
     transparent: true, renderingEnabled: false, keyboardInteractivity: 'none', acceptPointerEvents: false
   });
   try {
@@ -32,7 +34,7 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
   await UI.attachRoot(win, root);
   await UI.setElementId(win, root, 'desktop-view-root');
   await UI.setInheritAnimation(win, root, true);
-  await backdrop(win, root, { x: info.width, y: info.height }, BAR_HEIGHT);
+  const wall = await backdrop(win, root, { x: info.width, y: info.height }, BAR_HEIGHT);
   const content = await UI.createElement(win, {
     layout: { type: 'column', gap: SPACE.l, padding: { l: GUTTER, r: GUTTER, t: SPACE.s, b: GUTTER } },
     item: { size: { x: info.width, y: info.height } }
@@ -74,7 +76,7 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
       await done;
     } finally { clearTimeout(fallback); }
   };
-  const width = info.width - 2 * GUTTER;
+  let width = info.width - 2 * GUTTER;
   const ghost = { colour: CLEAR };
   const shellIcon = name => '/rom/assets/launcher/' + name + '.png';
   trace('window shell built');
@@ -246,6 +248,18 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
   await render();
   trace('content built');
   let key = JSON.stringify([mode, apps, mode === 'apps' ? null : snapshot]);
+  windowLayout(win, async size => {
+    if (closed || info.width === size.x && info.height === size.y) return;
+    if (shown) await Compositor.setWindowRenderingEnabled(win, false);
+    try {
+      info.width = size.x; info.height = size.y;
+      width = size.x - 2 * GUTTER;
+      await Promise.all([UI.setLayoutSize(win, root, size), UI.setLayoutSize(win, content, size),
+        resizeWallpaper(win, wall, { x: size.x, y: size.y + BAR_HEIGHT })]);
+      await render();
+    } finally { if (shown && !closed) await Compositor.setWindowRenderingEnabled(win, true); }
+  });
+
   return {
     win, dismiss,
     get shown() { return shown; },
@@ -395,7 +409,8 @@ export function createDrawerController(display) {
     if (visible) mode = next.DesktopView;
     if (view?.closed) view = null;
     if (!view) {
-      view = await createView(display, mode, apps, snapshot, refresh, trace);
+      const currentDisplay = (await Compositor.listDisplays()).find(value => value.display === display.display) || display;
+      view = await createView(currentDisplay, mode, apps, snapshot, refresh, trace);
       await view.prepare();
     }
     // Recheck after asynchronous preparation so a lock or dismissal wins over

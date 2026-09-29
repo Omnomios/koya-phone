@@ -23,6 +23,10 @@ control() {
     case "$1" in
         restart) kill -HUP "$(cat "$KOYA_DEV_RUN/shell.pid")" ;;
         power-menu) shell_call ShowPowerMenu ;;
+        orientation)
+            [[ $# == 2 ]] || fail 'Use orientation normal|left-up|bottom-up|right-up'
+            timeout 4 gdbus call --session --dest net.hadess.SensorProxy --object-path /net/hadess/SensorProxy \
+                --method org.koya.Dev.Sensor.SetOrientation "$2" ;;
         power|volume-down|volume-up)
             case "$1" in power) key=116;; volume-down) key=114;; volume-up) key=115;; esac
             for edge in 1 0; do
@@ -156,7 +160,7 @@ exec "$KOYA_DEV_KOYA" -n "$KOYA_DEV_PLUGINS" -m "$KOYA_DEV_ASSETS" -m "$KOYA_DEV
 WRAPPER
     sed 's|apps/wifi.js|apps/settings.js|' "$run/wifi.sh" >"$run/settings.sh"
     printf '#!/usr/bin/env bash\nexec bash %q --shell\n' "$script" >"$run/shell.sh"
-    printf '#!/usr/bin/env bash\nexec bash %q --control "$1"\n' "$script" >"$run/control.sh"
+    printf '#!/usr/bin/env bash\nexec bash %q --control "$@"\n' "$script" >"$run/control.sh"
     chmod +x "$run/"*.sh
     cat >"$run/data/applications/koya-wifi.desktop" <<DESKTOP
 [Desktop Entry]
@@ -175,7 +179,7 @@ StartupWMClass=org.koya.Settings
 DESKTOP
     config=$run/hyprland.conf
     # Translate the phone's 0.51 rules for the development compositor's 0.54 syntax.
-    sed -e "s/monitor = , preferred, auto, 2/monitor = , $KOYA_DEV_SIZE@60, auto, 1/" \
+    sed -e "s/monitor = , preferred, auto, 2/monitor = , $KOYA_DEV_SIZE@60, auto, 2/" \
         -e 's/^# Koya phone shell; syntax for Hyprland 0.51.x.$/# Koya local development; syntax for Hyprland 0.54.x./' \
         -e 's/^layerrule = noanim, /layerrule = no_anim on, match:namespace /' \
         -e 's/^windowrule = fullscreenstate 1 0, class:/windowrule = fullscreen_state 1 0, match:class /' \
@@ -200,9 +204,11 @@ DESKTOP
     if ! "$KOYA_DEV_HYPRLAND" --verify-config --config "$config" >"$logs/config.log" 2>&1; then
         fail "Hyprland rejected the development configuration; see $logs/config.log"
     fi
-    setsid "$KOYA_DEV_HYPRLAND" --config "$config" >"$logs/hyprland.log" 2>&1 &
+    setsid env KOYA_DEV_NESTED_SIZE="$KOYA_DEV_SIZE" KOYA_DEV_CHILD_PRELOAD="${LD_PRELOAD:-}" \
+        LD_PRELOAD="$KOYA_DEV_BUILD/libkoya-dev-wayland-size.so${LD_PRELOAD:+:$LD_PRELOAD}" \
+        "$KOYA_DEV_HYPRLAND" --config "$config" >"$logs/hyprland.log" 2>&1 &
     compositor_pid=$!
-    printf 'Local dev: %s nested window. Logs: %s\n' "$KOYA_DEV_SIZE" "$logs"
+    printf 'Local dev: %s nested output at scale 2. Logs: %s\n' "$KOYA_DEV_SIZE" "$logs"
     printf 'F5 restart | F6 power menu | F7 screen off/wake | F8 notification | F9/F10 volume | F12 exit\n'
     deadline=$((SECONDS + 30))
     while kill -0 "$compositor_pid" 2>/dev/null; do
@@ -224,7 +230,7 @@ DESKTOP
 }
 case "${1:-}" in
     --shell) supervise_shell; exit $? ;;
-    --control) [[ $# == 2 ]] || fail 'A control action is required'; control "$2"; exit ;;
+    --control) [[ $# -ge 2 ]] || fail 'A control action is required'; control "${@:2}"; exit ;;
     --session) session; exit ;;
 esac
 usage() {
@@ -235,7 +241,7 @@ Usage: bash dev/session.sh [options]
   --plugins DIR     Matching D-Bus/process plugins; detected from installation
   --hyprland FILE   Hyprland 0.54.x executable; default Hyprland on PATH
   --keyboard FILE   Squeekboard executable; automatically detected if installed
-  --size WxH        Nested output dimensions at scale 1; default 432x910
+  --size WxH        Output pixel dimensions at scale 2; default 1080x2280
   --build-dir DIR   Native build directory; default dev/.build/host
   --no-build        Reuse native development binaries
   --help           Show this help
@@ -243,7 +249,7 @@ Run from a Linux Wayland desktop as your normal user. No sudo or installation.
 For the complete release-based environment, use ./local-dev.sh.
 HELP
 }
-koya=${KOYA_BIN:-koya} assets= plugins= hyprland=Hyprland keyboard= size=432x910 build=$root/dev/.build/host no_build=0
+koya=${KOYA_BIN:-koya} assets= plugins= hyprland=Hyprland keyboard= size=1080x2280 build=$root/dev/.build/host no_build=0
 need_value() { [[ $# -ge 2 && -n "$2" ]] || fail "$1 requires a value"; }
 while (( $# )); do
     case "$1" in
@@ -261,6 +267,7 @@ while (( $# )); do
     shift
 done
 [[ "$size" =~ ^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$ ]] || fail '--size must be WIDTHxHEIGHT, each from 100 to 9999.'
+(( ${size%x*} % 2 == 0 && ${size#*x} % 2 == 0 )) || fail '--size dimensions must be even for the half-size host window.'
 (( EUID != 0 )) || fail 'Run as your desktop user, without sudo.'
 [[ -n ${WAYLAND_DISPLAY:-} ]] || fail 'Run from a terminal in a Linux Wayland desktop session.'
 parent=$WAYLAND_DISPLAY
@@ -294,6 +301,7 @@ fi
 for binary in koya-session-dev koya-hyprland-display-dev koya-dev-services koya-launch-app; do
     [[ -x "$build/$binary" ]] || fail "Missing $build/$binary; rerun without --no-build."
 done
+[[ -f "$build/libkoya-dev-wayland-size.so" ]] || fail "Missing nested-window sizing helper; rerun without --no-build."
 export KOYA_DEV_PARENT_WAYLAND=$parent KOYA_DEV_KOYA=$koya KOYA_DEV_HYPRLAND=$hyprland
 export KOYA_DEV_ASSETS=$assets KOYA_DEV_PLUGINS=$plugins KOYA_DEV_KEYBOARD=$keyboard
 export KOYA_DEV_SIZE=$size KOYA_DEV_BUILD=$build

@@ -179,7 +179,7 @@ configure_koya_repository() {
     case "$download_base" in https://*) ;; *) die 'KOYA_DOWNLOAD_BASE must use HTTPS.' ;; esac
     if [ "$koya_version" != latest ]; then
         printf '%s\n' "$koya_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$' || die 'Use latest or an APK version available in the Koya repository.'
-        [ "${koya_version##*-r}" -ge 888 ] || die 'This shell requires Koya build 888 or newer (text-input-v3 and independent D-Bus handles).'
+        [ "${koya_version##*-r}" -ge 891 ] || die 'This shell requires Koya build 891 or newer (live resize events and rotation-aware layer surfaces).'
     fi
     manifest "$source_dir/install/packages/koya.list" >"$work/koya-package-names"
     [ "$(cat "$work/koya-package-names")" = "$(printf 'koya\nhelix-plugin-dbus\nhelix-plugin-process')" ] || die 'Unexpected Koya package set.'
@@ -188,7 +188,7 @@ configure_koya_repository() {
         if [ "$koya_version" != latest ]; then
             printf '%s@koya=%s\n' "$package" "$koya_version"
         elif [ "$package" = koya ]; then
-            printf 'koya@koya>=0.5.3-r888\n'
+            printf 'koya@koya>=0.5.3-r891\n'
         else
             printf '%s@koya\n' "$package"
         fi
@@ -320,7 +320,12 @@ configure_system() {
     as_root rc-service elogind reload
     as_root udevadm control --reload-rules
     as_root udevadm trigger --action=change --subsystem-match=input
+    as_root udevadm trigger --action=change --subsystem-match=iio
+    # The Qualcomm sensor proxy rules may have been installed after FastRPC
+    # devices appeared. Refresh just those nodes before starting the proxy.
+    as_root udevadm trigger --action=change --subsystem-match=misc --sysname-match='fastrpc-*'
     as_root udevadm settle
+    ensure_service iio-sensor-proxy
     # Persist vibration without sound for the graphical user, including root installs.
     as_login dbus-run-session -- env GSETTINGS_BACKEND=dconf \
         gsettings set org.sigxcpu.feedbackd profile quiet

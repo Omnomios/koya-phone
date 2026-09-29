@@ -10,6 +10,7 @@ audio and internet access.
 | Distribution | postmarketOS v25.12 or newer, with apk-tools 3 or newer |
 | Architecture | aarch64 or x86_64 |
 | Compositor packages | Hyprland 0.51.x available in the configured repositories |
+| Koya packages | Build 891 or newer, with live resizing and rotation-aware layer surfaces |
 | Device | OnePlus 6 (`enchilada`); other devices use a generic profile and need working hardware support |
 | Installer access | `curl` and permission to use `sudo` or `doas`, or a root shell |
 
@@ -20,6 +21,8 @@ signed [Koya Alpine repository](https://www.koya-ui.com/repository/alpine) with 
 branches and device configuration are retained.
 The installer sets feedbackd's `quiet` profile for the graphical user, enabling
 vibration feedback without sound.
+It installs and enables `iio-sensor-proxy` for automatic rotation and refreshes
+sensor device rules so the service detects existing devices on the first install.
 
 ## Install
 
@@ -64,7 +67,7 @@ shell releases remain in the `releases` directory; each release's
 `install-record.txt` records the repository and installed Koya package versions.
 
 Edit `~/.local/share/koya-shell/current/session.conf` to change screen timeouts,
-volume, brightness and vibration. Display settings are in
+auto-rotation, volume, brightness and vibration. Display settings are in
 `/etc/koya-shell/hyprland.conf`. See the [user guide](user-guide.md#settings) for
 settings and defaults.
 
@@ -96,6 +99,24 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger --action=change --subsystem-match=input
 sudo udevadm settle
 sudo rc-service tinydm restart
+```
+
+### Automatic rotation is missing
+
+Enable **Settings → Screen & sleep → Auto-rotate**. To check the hardware, run
+`monitor-sensor --accel` from a terminal in the phone's graphical session. An SSH
+session is normally denied sensor claims by polkit. Koya releases its claim
+while the screen is off or auto-rotate is disabled.
+
+For a OnePlus 6, check `rc-service hexagonrpcd-sdsp status` and
+`rc-service iio-sensor-proxy status`. If the sensor proxy was installed manually
+after boot, refresh its existing device rules:
+
+```sh
+sudo udevadm control --reload-rules
+sudo udevadm trigger --action=change --subsystem-match=misc --sysname-match='fastrpc-*'
+sudo udevadm settle
+sudo rc-service iio-sensor-proxy restart
 ```
 
 ### Firefox notifications are missing

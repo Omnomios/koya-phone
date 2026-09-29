@@ -7,6 +7,7 @@ import { clips } from './motion.js';
 import { NAV_HEIGHT, ORANGE } from './theme.js';
 import { createDrawerController } from './desktop-view.js';
 
+
 export default async () => {
   const display = (await Compositor.listDisplays())[0];
   const win = await Compositor.createWindow({
@@ -14,14 +15,13 @@ export default async () => {
     display: display.display, namespace: 'koya-navigation', msaaSamples: 1,
     keyboardInteractivity: 'none', acceptPointerEvents: true
   });
-  const info = await Compositor.getWindowInfo(win);
   // Full-height targets with no top/bottom dead strip. At 2x on this phone,
   // 72 logical pixels is about 9 mm and a 12-pixel gap is about 1.5 mm.
   const targetGap = 12;
   await Compositor.setClearColor(win, 0, 0, 0, 1);
   const root = await UI.createElement(win, {
-    layout: { type: 'row', justifyContent: 'center', alignItems: 'center', gap: targetGap },
-    item: { size: { x: info.width, y: NAV_HEIGHT } }
+    layout: { type: 'row', justifyContent: 'start', alignItems: 'center', gap: targetGap },
+    item: { size: { x: 'auto', y: NAV_HEIGHT } }
   });
   await UI.attachRoot(win, root);
   const drawers = createDrawerController(display);
@@ -58,7 +58,6 @@ export default async () => {
       Log.error('Navigation: ' + error);
     }
   };
-  const width = (info.width - targetGap * 3) / 4;
   // A short pill under Apps, Desktops and Keyboard shows which is open.
   const marks = {}, active = {};
   const mark = async (parent, name) => {
@@ -84,7 +83,9 @@ export default async () => {
   for (const [name, action] of [['apps', () => invoke('ShowDesktopView', 's', 'apps')],
     ['home', () => invoke('SwitchDesktop', 'u', 1)], ['desktops', () => invoke('ShowDesktopView', 's', 'desktops')],
     ['keyboard', () => invoke('ToggleKeyboard')]]) {
-    const target = await button(win, root, '', width, NAV_HEIGHT, action,
+    const slot = await UI.createElement(win, { item: { size: { x: 0, y: NAV_HEIGHT }, flexGrow: 1 } });
+    await UI.attach(win, root, slot);
+    const target = await button(win, slot, '', 0, NAV_HEIGHT, action,
       { colour: [0,0,0,0], radius: 0, icon: '/rom/assets/launcher/' + name + '.png', iconSize: 27,
         feedbackMotion: { squash: 0.86, peak: 1.2, lift: 9 },
         pressScale: 0.86, releaseScale: 1.12,

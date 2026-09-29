@@ -38,3 +38,20 @@ power, network, keyboard, battery, and compositor behavior use local fixtures.
 
 The existing `capture-*.js` scripts exercise rendered UI separately and require
 a Wayland compositor.
+
+`capture-rotation.js` runs in a private, single-output local-development session
+with the updated Koya engine. It checks programmatic resizing, rotates through all four transforms, and checks
+`windowResized` payloads and duplicate suppression, verifies shell-layer and
+wallpaper-grid bounds, and confirms the persistent components keep their PIDs.
+It restores the starting transform and writes `/tmp/koya-rotation.json`.
+
+`rotation-integration` exercises the real system-D-Bus sensor client against a
+private sensor service: all four orientations, orientation lock, settling rapid
+changes, screen-off/sleep/inactive sensor release, absent sensors, denied claims,
+device and proxy recovery, and cancelling a pending rotation when disabled.
+
+`capture-auto-rotation.js` runs in the private graphical development session and
+drives its mock accelerometer through all four orientations. It checks live
+Settings/wallpaper geometry and unchanged shell processes, then changes the
+Auto-rotate preference to test orientation lock and re-enabling. It restores the
+sensor/preference and writes `/tmp/koya-auto-rotation.json`.

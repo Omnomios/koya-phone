@@ -6,6 +6,7 @@ build=${1:?Pass the native development build directory}
 if [[ ${2:-} != --inside ]]; then
     bash "$root/dev/session.sh" --help >/dev/null
     if bash "$root/dev/session.sh" --size broken > /dev/null 2>&1; then exit 1; fi
+    if bash "$root/dev/session.sh" --size 1081x2280 > /dev/null 2>&1; then exit 1; fi
     exec dbus-run-session -- env KOYA_DEV_TEST_PRIVATE=1 bash "$0" "$build" --inside
 fi
 [[ ${KOYA_DEV_TEST_PRIVATE:-} == 1 ]] || { printf 'Start this test without --inside.\n' >&2; exit 1; }
@@ -45,6 +46,12 @@ grep -q 'Mock PowerOff' "$test_dir/services.log"
 grep -q 'Mock Reboot' "$test_dir/services.log"
 call org.freedesktop.login1 /org/freedesktop/login1/session/localdev org.freedesktop.login1.Session.SetBrightness backlight fixture 45 >/dev/null
 [[ $(cat "$KOYA_TEST_BACKLIGHT_DIR/fixture/brightness") == 45 ]]
+sensor=net.hadess.SensorProxy
+sensorpath=/net/hadess/SensorProxy
+call "$sensor" "$sensorpath" "$sensor.ClaimAccelerometer" >/dev/null
+call "$sensor" "$sensorpath" org.koya.Dev.Sensor.SetOrientation left-up >/dev/null
+call "$sensor" "$sensorpath" org.freedesktop.DBus.Properties.Get "$sensor" AccelerometerOrientation | grep -q left-up
+call "$sensor" "$sensorpath" "$sensor.ReleaseAccelerometer" >/dev/null
 call "$nm" /org/freedesktop org.freedesktop.DBus.ObjectManager.GetManagedObjects | grep -q 'AccessPoint/5'
 call "$nm" "$device" "$nm.Device.Wireless.RequestScan" '{}' >/dev/null
 call "$nm" "$device" org.freedesktop.DBus.Properties.Get "$nm.Device.Wireless" LastScan | grep -q 'int64 2'
@@ -78,7 +85,7 @@ set -euo pipefail
 [[ "$PULSE_SERVER" == "unix:$XDG_RUNTIME_DIR/no-audio-server" ]]
 [[ -L "$KOYA_DEV_SOURCE/apps" && -L "$KOYA_DEV_SOURCE/build" ]]
 [[ ! -v KOYA_TEST_HAPTICS && ! -v HYPRLAND_INSTANCE_SIGNATURE && ! -v DISPLAY ]]
-grep -q 'monitor = , 432x910@60, auto, 1' "$3"
+grep -q 'monitor = , 1080x2280@60, auto, 2' "$3"
 grep -Fxq 'layerrule = no_anim on, match:namespace ^koya-.*$' "$3"
 grep -Fxq 'windowrule = fullscreen_state 1 0, match:class .*' "$3"
 ! grep -q 'disable_hyprland_qtutils_check' "$3"
@@ -94,7 +101,7 @@ STUB
 chmod +x "$test_dir/Hyprland"
 export KOYA_DEV_BUILD=$test_dir/build KOYA_DEV_HYPRLAND=$test_dir/Hyprland
 export KOYA_DEV_KOYA=/unused/koya KOYA_DEV_ASSETS=/unused/assets KOYA_DEV_PLUGINS=/unused/plugins
-export KOYA_DEV_PARENT_WAYLAND=/unused/parent-wayland KOYA_DEV_SIZE=432x910 KOYA_DEV_KEYBOARD=
+export KOYA_DEV_PARENT_WAYLAND=/unused/parent-wayland KOYA_DEV_SIZE=1080x2280 KOYA_DEV_KEYBOARD=
 export KOYA_DEV_AUDIT=$test_dir/runtime KOYA_TEST_HAPTICS=1 HYPRLAND_INSTANCE_SIGNATURE=host DISPLAY=:0
 export KOYA_DEV_HOST_BUS=$DBUS_SESSION_BUS_ADDRESS
 mkdir -p "$KOYA_DEV_BUILD"

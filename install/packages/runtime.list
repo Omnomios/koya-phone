@@ -13,6 +13,9 @@ polkit-elogind
 polkit-openrc
 eudev
 eudev-openrc
+iio-sensor-proxy
+iio-sensor-proxy-openrc
+iio-sensor-proxy-udev
 glib
 dconf
 libevdev

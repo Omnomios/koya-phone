@@ -2,6 +2,7 @@
 #include <gio/gio.h>
 #include <glib-unix.h>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include <cstring>
@@ -16,6 +17,7 @@ static constexpr const char *PROFILE = "org.freedesktop.NetworkManager.Settings.
 static constexpr const char *ACTIVE = "/org/freedesktop/NetworkManager/ActiveConnection/1";
 static constexpr const char *LOGIN = "org.freedesktop.login1";
 static constexpr const char *SESSION = "/org/freedesktop/login1/session/localdev";
+static constexpr const char *SENSOR = "net.hadess.SensorProxy", *SENSOR_PATH = "/net/hadess/SensorProxy";
 
 static bool own(GDBusConnection *bus, const char *name) {
     GError *error = nullptr;
@@ -42,6 +44,9 @@ class Services {
     std::map<std::string, GVariant *> profiles;
     std::map<std::string, guint> profile_registrations;
     unsigned serial = 1;
+    std::set<std::string> sensor_clients;
+    unsigned sensor_claims = 0, sensor_releases = 0;
+    guint sensor_watch = 0;
     gint64 scan = 1;
     void set(const std::string &path, const std::string &iface, const std::string &name, GVariant *value, bool emit = false) {
         auto &slot = objects[path][iface][name];
@@ -114,7 +119,29 @@ class Services {
         auto *self = static_cast<Services *>(data);
         GVariant *result = nullptr;
         const std::string name(member);
-        if (name == "GetSessionByPID") result = g_variant_new("(o)", SESSION);
+        if (name == "ClaimAccelerometer") {
+            self->sensor_clients.insert(g_dbus_method_invocation_get_sender(invocation));
+            ++self->sensor_claims;
+        } else if (name == "ReleaseAccelerometer") {
+            self->sensor_clients.erase(g_dbus_method_invocation_get_sender(invocation));
+            ++self->sensor_releases;
+        } else if (name == "SetOrientation") {
+            const char *orientation; g_variant_get(args, "(&s)", &orientation);
+            const std::set<std::string> values = {"normal", "left-up", "bottom-up", "right-up", "undefined"};
+            if (!values.count(orientation)) {
+                g_dbus_method_invocation_return_dbus_error(invocation, "org.koya.Dev.InvalidOrientation", "Unknown orientation"); return;
+            }
+            self->set(SENSOR_PATH, SENSOR, "AccelerometerOrientation", g_variant_new_string(orientation), !self->sensor_clients.empty());
+        } else if (name == "SetAvailable") {
+            gboolean available; g_variant_get(args, "(b)", &available);
+            self->set(SENSOR_PATH, SENSOR, "HasAccelerometer", g_variant_new_boolean(available), true);
+        } else if (name == "Counts") {
+            GVariantBuilder counts; g_variant_builder_init(&counts, G_VARIANT_TYPE_VARDICT);
+            g_variant_builder_add(&counts, "{sv}", "Claims", g_variant_new_uint32(self->sensor_claims));
+            g_variant_builder_add(&counts, "{sv}", "Releases", g_variant_new_uint32(self->sensor_releases));
+            g_variant_builder_add(&counts, "{sv}", "ActiveClaims", g_variant_new_uint32(self->sensor_clients.size()));
+            result = g_variant_new("(a{sv})", &counts);
+        } else if (name == "GetSessionByPID") result = g_variant_new("(o)", SESSION);
         else if (name == "CanSuspend") result = g_variant_new("(s)", "na");
         else if (name == "CanPowerOff" || name == "CanReboot") result = g_variant_new("(s)", "yes");
         else if (name == "PowerOff" || name == "Reboot") g_print("Mock %s (host unchanged)\n", member);
@@ -171,7 +198,19 @@ class Services {
         g_dbus_method_invocation_return_value(invocation, result);
     }
 public:
-    explicit Services(GDBusConnection *connection): bus(connection) {
+    explicit Services(GDBusConnection *connection): bus(G_DBUS_CONNECTION(g_object_ref(connection))) {
+        set(SENSOR_PATH, SENSOR, "HasAccelerometer", g_variant_new_boolean(TRUE));
+        set(SENSOR_PATH, SENSOR, "AccelerometerOrientation", g_variant_new_string("normal"));
+        register_interface(SENSOR_PATH, "<interface name=\"org.koya.Dev.Sensor\">"
+            "<method name=\"SetOrientation\"><arg type=\"s\" direction=\"in\"/></method>"
+            "<method name=\"SetAvailable\"><arg type=\"b\" direction=\"in\"/></method>"
+            "<method name=\"Counts\"><arg type=\"a{sv}\" direction=\"out\"/></method></interface>");
+        sensor_watch = g_dbus_connection_signal_subscribe(bus, "org.freedesktop.DBus", "org.freedesktop.DBus",
+            "NameOwnerChanged", nullptr, nullptr, G_DBUS_SIGNAL_FLAGS_NONE,
+            [](GDBusConnection*, const char*, const char*, const char*, const char*, GVariant *args, gpointer data) {
+                const char *name, *old_owner, *new_owner; g_variant_get(args, "(&s&s&s)", &name, &old_owner, &new_owner);
+                if (!*new_owner) static_cast<Services*>(data)->sensor_clients.erase(name);
+            }, this, nullptr);
         set(SESSION, "org.freedesktop.login1.Session", "Active", g_variant_new_boolean(TRUE));
         register_interface("/org/freedesktop/login1", "<interface name=\"org.freedesktop.login1.Manager\">"
             "<method name=\"GetSessionByPID\"><arg type=\"u\" direction=\"in\"/><arg type=\"o\" direction=\"out\"/></method>"
@@ -213,14 +252,17 @@ public:
             if (interface.first == WIRELESS) xml += "<method name=\"RequestScan\"><arg type=\"a{sv}\" direction=\"in\"/></method>";
             if (interface.first == DEV) xml += "<method name=\"Disconnect\"/>";
             if (object.first == SESSION) xml += "<method name=\"SetBrightness\"><arg type=\"s\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"u\" direction=\"in\"/></method>";
+            if (object.first == SENSOR_PATH) xml += "<method name=\"ClaimAccelerometer\"/><method name=\"ReleaseAccelerometer\"/>";
             register_interface(object.first.c_str(), xml + "</interface>");
         }
         register_interface("/org/freedesktop", "<interface name=\"org.freedesktop.DBus.ObjectManager\"><method name=\"GetManagedObjects\"><arg type=\"a{oa{sa{sv}}}\" direction=\"out\"/></method></interface>");
     }
     ~Services() {
+        g_dbus_connection_signal_unsubscribe(bus, sensor_watch);
         for (const auto &object : objects) for (const auto &interface : object.second)
             for (const auto &property : interface.second) g_variant_unref(property.second);
         for (const auto &profile : profiles) g_variant_unref(profile.second);
+        g_object_unref(bus);
     }
 };
 
@@ -233,7 +275,7 @@ int main() {
     GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
     if (!bus) { g_printerr("%s\n", error->message); g_error_free(error); return 1; }
     Services services(bus);
-    if (!own(bus, LOGIN) || !own(bus, NM)) { g_object_unref(bus); return 1; }
+    if (!own(bus, LOGIN) || !own(bus, NM) || !own(bus, SENSOR)) { g_object_unref(bus); return 1; }
     GMainLoop *loop = g_main_loop_new(nullptr, FALSE);
     for (int sig : {SIGTERM, SIGINT}) g_unix_signal_add(sig, [](gpointer data)->gboolean {
         g_main_loop_quit(static_cast<GMainLoop *>(data)); return G_SOURCE_REMOVE;

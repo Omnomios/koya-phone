@@ -3,6 +3,7 @@ import * as Compositor from 'Koya/Compositor';
 import * as Engine from 'Helix/Engine';
 import * as Event from 'Helix/Event';
 import * as Log from 'Helix/Log';
+import { windowLayout } from './window-layout.js';
 import { wifiNetwork } from './wifi-network.js';
 import { keyboardVisible } from './session-keyboard.js';
 import { button, icon, text, label as textLabel, pill, toggle, sheetHeader } from './touch-ui.js';
@@ -21,7 +22,8 @@ export default async (options = {}) => {
   await Compositor.setClearColor(win, ...INK);
   // Before the first configure, window info can report the whole output.
   // The tiled window is never taller than the space between the bars.
-  const info = await Compositor.getWindowInfo(win), size = { x: info.width, y: Math.min(info.height, requested.y) }, width = size.x - 2 * GUTTER;
+  const info = await Compositor.getWindowInfo(win), size = { x: info.width, y: Math.min(info.height, requested.y) };
+  let width = size.x - 2 * GUTTER;
   const root = await UI.createElement(win, { item: { size } }); await UI.attachRoot(win, root);
   let board, modal, field, errorLabel, form, password = '', preedit = '', reveal = false, focused = false, page = 0, key;
   let entry, focusRing, caret, caretBlink, caretRunning = false, submitted = false;
@@ -95,9 +97,14 @@ export default async (options = {}) => {
     if (accepted) await enqueue(closeForm);
     else await enqueue(updateField);
   };
-  const openForm = async network => {
-    if (latest.working) return;
-    await closeForm(); form = network; reveal = false;
+  const openForm = async (network, restore) => {
+    if (latest.working && !restore) return;
+    if (!restore) { await closeForm(); form = network; reveal = false; }
+    else {
+      if (caret) await UI.stopAnimation(win, caret);
+      caretRunning = false;
+      if (modal) await UI.destroyElement(win, modal);
+    }
     await Compositor.setWindowRenderingEnabled(win, false);
     try {
     if (board) await UI.setEnabled(win, board, false);
@@ -276,6 +283,13 @@ export default async (options = {}) => {
     if ([28, 96, 65293].includes(event.key)) submit();
   };
   Event.on('keyDown', keyDown); Event.on('keyRepeat', event => { if ([14, 65288].includes(event.key)) keyDown(event); });
+  windowLayout(win, next => enqueue(async () => {
+    Object.assign(size, next); width = next.x - 2 * GUTTER;
+    await UI.setLayoutSize(win, root, next);
+    key = undefined;
+    if (form) await openForm(form, true);
+    else await paint();
+  }));
   await paint(); await Compositor.setWindowRenderingEnabled(win, true);
   // Native promises need the running engine event loop.
   setTimeout(() => backend.start().catch(() => { latest = { ...latest, loading: false, error: 'NetworkManager is unavailable' }; enqueue(paint); }), 0);

@@ -86,6 +86,13 @@ export function createVolume(display, options = {}) {
     if (wanted && visible() && !surface.shown) await surface.show();
   }
   return { audio,
+    resize: next => enqueue(async () => {
+      if (size.x === next.x && size.y === next.y) return;
+      Object.assign(size, next);
+      if (surface && !surface.closed) await Compositor.destroyWindow(surface.win);
+      surface = undefined;
+      await reconcile();
+    }),
     onState: value => {
       state = value; audio.configure(value);
       if (!started && value.Active && (value.VolumeButtonsEnabled !== false || value.VolumeIndicatorEnabled !== false)) { started = true; audio.start(); }

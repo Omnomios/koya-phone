@@ -31,6 +31,8 @@ export async function lockMotion(win, wallpaper, content, size) {
   };
   return {
     play,
+    resize: () => UI.updateAnimation(win, wallpaper, background.ids.leave,
+      [{ time: 0.25, opacity: 1, ...zoomPose(1.035), ease: 'outCubic' }]),
     async drag(distance) {
       const travel = Math.max(0, Math.min(size.y * 0.6, distance));
       const progress = Math.min(1, travel / swipeThreshold(size.y));

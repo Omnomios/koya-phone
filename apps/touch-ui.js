@@ -7,8 +7,7 @@ import { wallpaperSurface } from './wallpaper-surface.js';
 // contentAlign places the text's bounds in its slot. With the default 'ink'
 // basis those bounds are the tight glyph box, which changes with every string
 // (ascenders, descenders, width), so labels jump when their text changes.
-// 'line' uses the font's stable line box instead. contentAlign 'fill' is not
-// used: only box renderables resize to fill a slot.
+// 'line' uses the font's stable line box instead.
 export async function text(win, parent, value, size, width, height, colour = CREAM, font = FONT, justify = 'center') {
   const align = { left: 'start', center: 'center', right: 'end' }[justify];
   const id = await UI.createElement(win, {
@@ -20,12 +19,13 @@ export async function text(win, parent, value, size, width, height, colour = CRE
 }
 
 // Start-aligned, clipped and word-wrapped: row titles, captions and body copy.
-// Word-wrap needs an explicit reflow box; the slot size alone does not set it.
+// Fluid labels inherit their reflow box from the layout bounds.
 export async function label(win, parent, value, size, width, height, colour = CREAM, font = FONT) {
+  const fluid = width === 'auto' || width === 0;
   const id = await UI.createElement(win, {
     renderable: { type: 'text', string: value, size, font, colour, layoutMode: 'word-wrap', justify: 'left', vAlign: 'center',
-      metricsBasis: 'line', aabb: { min: { x: 0, y: 0 }, max: { x: width, y: height } } },
-    item: { size: { x: width, y: height } }, contentAlign: { x: 'start', y: 'center' }, clipToBounds: true
+      metricsBasis: 'line', ...(!fluid ? { aabb: { min: { x: 0, y: 0 }, max: { x: width, y: height } } } : {}) },
+    item: { size: { x: width, y: height } }, contentAlign: fluid ? 'fill' : { x: 'start', y: 'center' }, clipToBounds: true
   });
   await UI.attach(win, parent, id);
   return id;
@@ -95,11 +95,11 @@ export async function backdrop(win, parent, size, offset = 0) {
 // icon actions on the right, so close buttons land in the same place.
 export async function sheetHeader(win, parent, title, width, actions = [], accessory) {
   const row = await UI.createElement(win, {
-    layout: { type: 'row', alignItems: 'center' }, item: { size: { x: width, y: HEADER_HEIGHT } }
+    layout: { type: 'row', alignItems: 'center' }, item: { size: { x: 'auto', y: HEADER_HEIGHT } }
   });
   await UI.attach(win, parent, row);
-  const reserved = actions.reduce((sum, action) => sum + (action.width || TOUCH), 0) + (accessory?.width || 0);
-  const heading = await label(win, row, title, TYPE.title, width - reserved, HEADER_HEIGHT);
+  const heading = await label(win, row, title, TYPE.title, 0, HEADER_HEIGHT);
+  await UI.setGrow(win, heading, 1);
   if (accessory) await accessory.build(row);
   const buttons = [];
   for (const action of actions) {

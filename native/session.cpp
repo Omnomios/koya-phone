@@ -137,6 +137,7 @@ class Session {
     unsigned volume_step = 5, volume_max = 100, volume_timeout = 1800, volume_margin = 16, volume_position = 50;
     std::string volume_side = "left", volume_sink;
     bool haptics_enabled = true;
+    bool auto_rotate = true;
     unsigned haptics_interval = 45, brightness_minimum = 5;
     std::string wallpaper_id = "earthy-green";
     int lock_fd = -1, display_fd = -1;
@@ -226,6 +227,7 @@ class Session {
         g_variant_builder_add(&b, "{sv}", "HapticsMinIntervalMs", g_variant_new_uint32(haptics_interval));
         g_variant_builder_add(&b, "{sv}", "BrightnessMinPercent", g_variant_new_uint32(brightness_minimum));
         s("Wallpaper", wallpaper_id);
+        g_variant_builder_add(&b, "{sv}", "AutoRotateEnabled", g_variant_new_boolean(auto_rotate));
         s("LastError", error);
         s("CanPowerOff", power_cap);
         s("CanReboot", reboot_cap);
@@ -543,6 +545,7 @@ class Session {
             unsigned low, high;
         };
         const Setting settings[] = {
+            {"AutoRotateEnabled", "screen", "auto-rotate", nullptr, &auto_rotate, 0, 0},
             {"IdleLockSeconds", "idle", "lock-seconds", &idle_lock_seconds, nullptr, 0, 86400},
             {"IdleScreenSeconds", "idle", "lock-screen-seconds", &idle_screen_seconds, nullptr, 0, 86400},
             {"IdleSuspendSeconds", "idle", "suspend-seconds", &idle_suspend_seconds, nullptr, 0, 86400},
@@ -606,6 +609,13 @@ class Session {
         g_clear_error(&e);
         ShellSettings::merge(config);
         {
+            if (g_key_file_has_key(config, "screen", "auto-rotate", nullptr)) {
+                GError *error = nullptr;
+                gboolean enabled = g_key_file_get_boolean(config, "screen", "auto-rotate", &error);
+                if (!error) auto_rotate = enabled;
+                else g_warning("Invalid auto-rotate setting; using default");
+                g_clear_error(&error);
+            }
             gchar *wallpaper = g_key_file_get_string(config, "appearance", "wallpaper", nullptr);
             if (wallpaper && ShellSettings::wallpaper_available(root, wallpaper)) wallpaper_id = wallpaper;
             g_free(wallpaper);

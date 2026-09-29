@@ -3,7 +3,8 @@ import * as UI from 'Helix/UserInterface';
 import * as Log from 'Helix/Log';
 import { connect, call } from './session.js';
 import { clips } from './motion.js';
-import { wallpaperSurface } from './wallpaper-surface.js';
+import { windowLayout } from './window-layout.js';
+import { wallpaperSurface, resizeWallpaper } from './wallpaper-surface.js';
 import { lockMotion } from './lock-motion.js';
 import { swipeGesture } from './swipe.js';
 import { text as textElement } from './touch-ui.js';
@@ -14,7 +15,7 @@ export default async () => {
   const display = (await Compositor.listDisplays())[0];
   if (!display) throw new Error('No display available');
   const win = await Compositor.createWindow({
-    role: 'overlay', anchor: 'top-left', display: display.display,
+    role: 'overlay', anchor: 'fill', display: display.display,
     size: { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) },
     exclusiveZone: -1, namespace: 'koya-lock-screen', msaaSamples: 1,
     transparent: true, keyboardInteractivity: 'exclusive', acceptPointerEvents: true
@@ -40,7 +41,7 @@ export default async () => {
   await UI.attach(win, root, content);
   await UI.setInheritAnimation(win, content, true);
   await UI.setElementId(win, content, 'lock-content');
-  const text = (value, fontSize, height, colour = CREAM) => textElement(win, content, value, fontSize, info.width, height, colour);
+  const text = (value, fontSize, height, colour = CREAM) => textElement(win, content, value, fontSize, 'auto', height, colour);
   const format = () => {
     const now = new Date();
     return [String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0'),
@@ -70,7 +71,7 @@ export default async () => {
     restore: [{ time: 0.15, opacity: 1, ease: 'outCubic' }]
   });
   let state, leaving = false, sent = false, fallback;
-  const gesture = swipeGesture(info.height);
+  let gesture = swipeGesture(info.height);
   // Serialize native changes; input/state decisions remain synchronous.
   let queue = Promise.resolve();
   const enqueue = fn => { queue = queue.then(fn).catch(error => Log.error('Lock screen: ' + error)); };
@@ -125,6 +126,19 @@ export default async () => {
     });
   });
   await UI.setOnMouseExit(win, root, cancel);
+  windowLayout(win, next => enqueue(async () => {
+    await Compositor.setWindowRenderingEnabled(win, false);
+    try {
+      gesture.cancel(); dragDistance = null;
+      Object.assign(size, next); info.width = next.x; info.height = next.y;
+      gesture = swipeGesture(next.y);
+      await Promise.all([UI.setLayoutSize(win, root, next), UI.setLayoutSize(win, content, next),
+        UI.setLayout(win, content, { type: 'column', padding: { l: 0, r: 0, t: Math.round(next.y * 0.16), b: Math.max(40, Math.round(next.y * 0.05)) } }),
+        resizeWallpaper(win, sheet, next)]);
+      await motion.resize();
+      if (!leaving) await motion.play(state === 'locked' ? 'settle' : 'blank');
+    } finally { await Compositor.setWindowRenderingEnabled(win, true); }
+  }));
   await motion.play('blank');
   await Compositor.setWindowRenderingEnabled(win, true);
   connect('lock-screen', next => {

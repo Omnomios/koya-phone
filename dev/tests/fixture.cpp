@@ -40,6 +40,11 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--hyprland")) {
         if (argc > 2 && !strcmp(argv[2], "--version")) { g_print("Hyprland 0.54.3 (IPC fixture)\n"); return 0; }
         if (argc > 2 && !strcmp(argv[2], "--verify-config")) { g_print("config ok\n"); return 0; }
+        // The sizing helper must restore the environment before Hyprland
+        // starts its shell children. Only the compositor should load it.
+        if (g_getenv("KOYA_DEV_NESTED_SIZE") || g_getenv("KOYA_DEV_CHILD_PRELOAD")) return 1;
+        const char *preload = g_getenv("LD_PRELOAD");
+        if (preload && strstr(preload, "libkoya-dev-wayland-size.so")) return 1;
         const char *run = g_getenv("KOYA_DEV_RUN");
         if (!run || argc != 4 || strcmp(argv[2], "--config")) return 1;
         std::string instance = std::string(run) + "/hypr/local-dev-test";

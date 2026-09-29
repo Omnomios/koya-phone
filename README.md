@@ -6,7 +6,8 @@ keyboard, plus a Settings app for wallpapers and shell preferences. Built with
 [Koya](https://www.koya-ui.com) and [Hyprland](https://hypr.land).
 
 Koya Phone is experimental and designed for the OnePlus 6. It provides hardware
-volume controls, brightness adjustment, vibration feedback and a power menu.
+volume controls, brightness adjustment, vibration feedback, automatic screen
+rotation and a power menu.
 It does not include a calls or SMS interface.
 
 **The swipe screen does not require a password and does not securely lock your

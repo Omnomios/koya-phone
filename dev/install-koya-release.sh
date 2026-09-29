@@ -33,8 +33,8 @@ configure_repository() {
 install_release() {
     local package
     local -a packages=()
-    [[ "$koya_version" == latest || ( "$koya_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$ && ${koya_version##*-r} -ge 888 ) ]] || {
-        fail 'Use latest or a Koya APK release with build 888 or newer'; return 1;
+    [[ "$koya_version" == latest || ( "$koya_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$ && ${koya_version##*-r} -ge 891 ) ]] || {
+        fail 'Use latest or a Koya APK release with build 891 or newer'; return 1;
     }
     configure_repository
     for package in koya helix-plugin-dbus helix-plugin-process; do
@@ -44,7 +44,7 @@ install_release() {
             packages+=("$package@koya=$koya_version")
         fi
     done
-    if [[ "$koya_version" == latest ]]; then packages[0]='koya@koya>=0.5.3-r888'; fi
+    if [[ "$koya_version" == latest ]]; then packages[0]='koya@koya>=0.5.3-r891'; fi
     # APK verifies the repository index and packages using the authenticated key.
     apk add --no-cache "${packages[@]}"
 }

@@ -55,7 +55,7 @@ Open **Settings** from the app launcher. Choose **Wallpaper** for the four bundl
 wallpapers; tap a preview to apply it to the home screen, swipe screen and shell
 panel backgrounds. The selected wallpaper is marked **Selected**.
 
-**Screen & sleep** controls screen timeouts and minimum brightness. **Volume &
+**Screen & sleep** controls auto-rotation, screen timeouts and minimum brightness. **Volume &
 vibration** controls touch feedback, volume buttons and the volume indicator.
 Tap a setting to choose a value, or use its switch. All changes apply immediately
 and are saved automatically; no session restart is needed.
@@ -73,6 +73,14 @@ sudo rc-service tinydm restart
 ```
 
 ### Screen and sleep
+
+Auto-rotate is on by default. Turn **Auto-rotate** off to keep the current screen
+orientation. With it on, the display follows the phone's accelerometer after it
+holds the same orientation for one second, including on the swipe screen.
+A brief fade covers the shell while it rearranges for the new screen size.
+A device without an available sensor keeps its orientation.
+The sensor is released while the display is off, the session is inactive, or
+auto-rotate is off. The saved preference is `auto-rotate=true` in `[screen]`.
 
 These settings are in the `[idle]` section. Values are seconds; `0` disables the
 corresponding timeout.

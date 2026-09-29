@@ -36,6 +36,10 @@ grep -qx 'hyprland~0.51' "$work/packages"
 grep -qx soc-qcom-vulkan "$work/packages"
 grep -qx firefox "$work/packages"
 grep -qx alacritty "$work/packages"
+grep -qx iio-sensor-proxy "$work/packages"
+grep -qx iio-sensor-proxy-openrc "$work/packages"
+grep -q "ensure_service iio-sensor-proxy" "$TEST_INSTALL_ROOT/install.sh"
+grep -q "subsystem-match=misc --sysname-match='fastrpc-\*'" "$TEST_INSTALL_ROOT/install.sh"
 if grep -Eq '^(python3|weston[^ ]*|wayland-dev|helix-plugins)$' "$work/packages"; then exit 1; fi
 profile=generic; apps=0
 package_inputs
@@ -118,7 +122,7 @@ arch=aarch64; download_base=https://example.invalid/downloads
 koya_version=latest
 case "$mode" in
     pinned) koya_version=9.8.7-r9999 ;;
-    outdated) koya_version=0.5.3-r887 ;;
+    outdated) koya_version=0.5.3-r890 ;;
     invalid) koya_version=not-a-version ;;
 esac
 printf 'hyprland~0.51\ncurl\ngnupg\n' >"$work/packages"
@@ -191,7 +195,7 @@ for mode in latest pinned configured wrong-key bad-signature outdated invalid up
         if [ "$mode" = pinned ]; then
             packages='koya@koya=9.8.7-r9999 helix-plugin-dbus@koya=9.8.7-r9999 helix-plugin-process@koya=9.8.7-r9999'
         else
-            packages='koya@koya>=0.5.3-r888 helix-plugin-dbus@koya helix-plugin-process@koya'
+            packages='koya@koya>=0.5.3-r891 helix-plugin-dbus@koya helix-plugin-process@koya'
         fi
         grep -Fxq "add --simulate --upgrade hyprland~0.51 curl gnupg $packages" "$case_work/apk.calls"
         grep -Fxq "add --upgrade hyprland~0.51 curl gnupg $packages" "$case_work/apk.calls"
@@ -200,7 +204,7 @@ for mode in latest pinned configured wrong-key bad-signature outdated invalid up
         case "$mode" in
             wrong-key) grep -q 'fingerprint does not match' "$output" ;;
             bad-signature) grep -q 'Bad signature: Koya Alpine repository key' "$output" ;;
-            outdated) grep -q 'build 888 or newer' "$output" ;;
+            outdated) grep -q 'build 891 or newer' "$output" ;;
             invalid) grep -q 'APK version available' "$output" ;;
             update-failure|unavailable) ;;
             *) cat "$output" >&2; exit 1 ;;
