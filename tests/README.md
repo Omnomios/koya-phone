@@ -55,3 +55,10 @@ drives its mock accelerometer through all four orientations. It checks live
 Settings/wallpaper geometry and unchanged shell processes, then changes the
 Auto-rotate preference to test orientation lock and re-enabling. It restores the
 sensor/preference and writes `/tmp/koya-auto-rotation.json`.
+
+`update-service-integration` runs the real system updater on a private D-Bus,
+with a fake Polkit authority and controlled installer. It requires Python 3 with
+PyGObject (`py3-gobject3` in the Alpine dev image). It checks caller authorization,
+denial, duplicate requests, GUI disconnection during authorization and during
+installation, reconnecting, consecutive updates with surviving descendants,
+installer failure and retry. No privileged service or phone is modified.

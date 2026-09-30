@@ -1,19 +1,14 @@
 import * as UI from 'Helix/UserInterface';
 import * as Process from 'Module/process';
 import * as Log from 'Helix/Log';
+import { updateService } from './update-service.js';
 import { connect } from './session.js';
 import { appFrame } from './app-frame.js';
 import { label, pill } from './touch-ui.js';
 import { commitHash, shortHash, compareVersion } from './update-version.js';
 import { FONT, CREAM, ORANGE, INK, CARD, TRACK, MUTED, alpha, SPACE, RADIUS, TYPE } from './theme.js';
 
-// The worker writes these. Environment overrides exist for development and
-// tests, where the app runs without the root-owned installer.
-const STATUS = Process.getEnv('KOYA_UPDATE_STATUS', '/var/lib/koya-shell/update.status');
-const PHASE = Process.getEnv('KOYA_UPDATE_PHASE', '/var/lib/koya-shell/update.phase');
-const LOG = Process.getEnv('KOYA_UPDATE_LOG', '/var/log/koya-shell/update.log');
 const CONFIG = Process.getEnv('KOYA_UPDATE_CONFIG', '/etc/koya-shell/update.conf');
-const SCHEDULE = '/usr/local/libexec/koya-update-schedule';
 const VERSION_CHECK_INTERVAL = 5 * 60 * 1000;
 const quote = value => "'" + String(value).replace(/'/g, "'\\''") + "'";
 const fields = value => Object.fromEntries(value.split('\n').map(line => {
@@ -27,19 +22,11 @@ const read = async command => {
   catch (_) { return ''; }
 };
 const clean = value => value.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, ' ');
-// pkexec and the scheduler fail in a few known ways; say what happened in
-// words that fit the one-line status. The full text still goes to the log.
-const explain = message => /dismissed|cancel/i.test(message) ? 'Update cancelled'
-  : /not authori|authentication/i.test(message) ? 'Administrator approval was refused'
-  : /No such file|not installed/i.test(message) ? 'The updater is not installed on this phone'
-  : /already in progress|busy/i.test(message) ? 'An update is already running'
-  : /atd/i.test(message) ? 'The system scheduler is not running'
-  : 'Could not start the update';
+const explain = message => /cancel|refused|not authori/i.test(message) ? 'Administrator approval was refused or cancelled' : message;
 
-// The update's life, as the person sees it. Markers come from the worker's log.
+// The update's life, as reported by the system service.
 const STEPS = [
   { title: 'Approve', detail: 'Confirm with your password' },
-  { title: 'Queue', detail: 'Handed to the system scheduler' },
   { title: 'Download', detail: 'Fetching the installer' },
   { title: 'Install', detail: 'Building and deploying Koya' },
   { title: 'Restart', detail: 'Koya reopens when it is done' }
@@ -47,29 +34,23 @@ const STEPS = [
 const STEP = 52, DOT = 18;
 
 export default async () => {
-  let shell = {}, status = '', phase = '', log = '', error = '', launching = false, source = '', ready = false;
+  let shell = {}, status = '', phase = '', log = '', error = '', starting = false, source = '', ready = false;
   let repo = '', ref = '', installed = '', localSource = false, versionKey = '', checkedKey = '', checkingKey = '', checkedAt = 0;
   let version = { kind: 'checking', head: '', message: 'Checking repository…' };
-  // The worker retains its result for diagnostics; a fresh app session starts idle.
+  // A reopened app shows a live job, without celebrating an old result again.
   let observedAttempt = false;
   const active = () => ready && shell.Active && shell.ScreenState === 'unlocked';
-  const busy = () => launching || status === 'queued' || status === 'running';
-  // The worker keeps the last reached stage even when its log grows or fails.
-  // Older deployments have no phase file, so keep their log markers as a fallback.
+  const busy = () => starting || status === 'authorizing' || status === 'running';
   const progress = () => {
-    const reached = phase === 'install' ? 3 : phase === 'download' ? 2
-      : /Starting installation/.test(log) ? 3 : /Fetching installer/.test(log) || status === 'running' ? 2 : 1;
-    if (launching) return { index: 0 };
-    if (status === 'queued') return { index: reached };
-    if (status === 'running') return { index: reached };
-    if (status === 'succeeded' && observedAttempt) return { index: 4, done: true };
-    if (status === 'failed' && observedAttempt) return { index: reached, failed: true };
+    if (starting || status === 'authorizing') return { index: 0 };
+    if (status === 'running') return { index: phase === 'install' ? 2 : 1 };
+    if (status === 'succeeded' && observedAttempt) return { index: 3, done: true };
+    if (status === 'failed' && observedAttempt) return { index: phase === 'install' ? 2 : phase === 'download' ? 1 : 0, failed: true };
     return { index: -1 };
   };
-  const statusHint = () => error ? explain(error) : launching ? 'Waiting for approval…' : status === 'queued' ? 'Queued. The installer starts shortly.'
+  const statusHint = () => error ? explain(error) : starting || status === 'authorizing' ? 'Waiting for approval…'
     : status === 'running' ? 'Updating. Koya will restart when it is done.' : status === 'succeeded' && observedAttempt ? 'Update complete.'
-    : status === 'failed' && observedAttempt ? 'The update failed. See the installer output.' : !ready ? 'Connecting to the shell…'
-    : !active() ? 'Unlock the phone to update' : '';
+    : !ready ? 'Connecting to the shell…' : !active() ? 'Unlock the phone to update' : '';
 
   let onLogPage = false;
   const frame = await appFrame({ title: 'Update Koya', appId: 'org.koya.Update', name: 'Update',
@@ -145,22 +126,15 @@ export default async () => {
       if (!ok()) return;
       if (busy()) { punch(button, 1.03); return; }
       if (!active()) { shake(button); flash('Unlock the phone to update', ORANGE); return; }
-      observedAttempt = false;
-      launching = true; error = '';
+      observedAttempt = true;
+      starting = true; error = '';
       await paint(true);
-      try {
-        await Process.exec('pkexec --disable-internal-agent ' + SCHEDULE);
-        observedAttempt = true;
-        // The worker may have started (or failed) before pkexec returns.
-        await refresh();
-      } catch (cause) {
-        error = clean(String(cause.stderr || cause.message || cause)).trim().slice(-160) || 'Unable to start the update.';
-        Log.error('Update request: ' + error);
-      } finally {
-        launching = false;
-        await paint(true);
-        await frame.refreshHint();
-        if (error) { shake(button); flash(explain(error), ORANGE, 4000); }
+      try { await updater.start(); }
+      catch (cause) { error = clean(String(cause.message || cause)); }
+      finally {
+        starting = false;
+        await frame.enqueue(async () => { await frame.current?.update(); await frame.refreshHint(); });
+        if (error) flash(explain(error), ORANGE, 4000);
       }
     };
     const button = await pill(win, right, 'Install update', columnWidth, install, { colour: ORANGE, labelColour: INK, height: 56, size: TYPE.body + 1,
@@ -182,7 +156,7 @@ export default async () => {
         mark.state = next;
         await UI.setCircleColour(win, mark.ring, next === 'pending' ? MUTED : ORANGE);
         await UI.setTextColour(win, mark.title, next === 'pending' ? MUTED : next === 'failed' ? ORANGE : CREAM);
-        await UI.setTextString(win, mark.detail, next === 'failed' ? 'Failed here' : next === 'done' && i === 4 ? 'Restarting now' : STEPS[i].detail);
+        await UI.setTextString(win, mark.detail, next === 'failed' ? 'Failed here' : next === 'done' && i === 3 ? 'Complete' : STEPS[i].detail);
         if (mark.rail) await UI.setBoxColour(win, mark.rail, next === 'done' ? ORANGE : TRACK);
         if (next === 'pending') await hidden(mark.dot);
         else if (next === 'active') {
@@ -199,7 +173,7 @@ export default async () => {
       }
       const running = busy();
       if (running !== waiting) { waiting = running; running ? feedback?.begin().catch(() => {}) : feedback?.end().catch(() => {}); }
-      await UI.setTextString(win, actionLabel, launching ? 'Waiting for approval…' : running ? 'Updating…'
+      await UI.setTextString(win, actionLabel, starting || status === 'authorizing' ? 'Waiting for approval…' : running ? 'Updating…'
         : (status === 'failed' && observedAttempt) || error ? 'Try again' : 'Install update');
       // Dim the action only while the phone is locked.
       play(button, [{ time: 0.2, opacity: !active() ? 0.45 : 1, ease: 'outCubic' }]);
@@ -277,8 +251,7 @@ export default async () => {
   const refresh = () => {
     const task = refreshQueue.then(async () => {
       if (frame.closing) return;
-      const [nextStatus, nextPhase, nextLog, config] = await Promise.all([
-        read('cat ' + quote(STATUS)), read('cat ' + quote(PHASE)), read('tail -n 60 ' + quote(LOG)), read('cat ' + quote(CONFIG))]);
+      const config = await read('cat ' + quote(CONFIG));
       const values = fields(config);
       const record = values.prefix ? fields(await read('cat ' + quote(values.prefix + '/current/install-record.txt'))) : {};
       const nextRepo = values.repo || '', nextRef = values.ref || '';
@@ -293,12 +266,8 @@ export default async () => {
             : { kind: 'checking', head: '', message: 'Checking repository…' };
         checkedKey = ''; checkedAt = 0;
       }
-      if (nextStatus !== status || nextPhase !== phase || nextLog !== log || nextSource !== source ||
-          nextRepo !== repo || nextRef !== ref || nextInstalled !== installed || nextLocalSource !== localSource) {
-        status = nextStatus; phase = nextPhase; log = nextLog; source = nextSource;
-        repo = nextRepo; ref = nextRef; installed = nextInstalled; localSource = nextLocalSource;
-        if (status === 'queued' || status === 'running') observedAttempt = true;
-        if (status === 'running' || ((status === 'succeeded' || status === 'failed') && observedAttempt)) error = '';
+      if (nextSource !== source || nextRepo !== repo || nextRef !== ref || nextInstalled !== installed || nextLocalSource !== localSource) {
+        source = nextSource; repo = nextRepo; ref = nextRef; installed = nextInstalled; localSource = nextLocalSource;
         await frame.enqueue(async () => { await frame.current?.update(); await frame.refreshHint(); });
       }
     });
@@ -308,15 +277,21 @@ export default async () => {
   const poll = async () => {
     try { await refresh(); } catch (_) { /* refresh already records the error */ }
     checkVersion().catch(cause => Log.error('Update version: ' + cause));
-    // Quick while an update runs; relaxed otherwise.
-    if (!frame.closing) setTimeout(poll, busy() ? 1000 : 4000);
+    if (!frame.closing) setTimeout(poll, 30000);
   };
   await frame.show(homeBuild, { title: 'Update Koya' });
   poll();
+  const updater = updateService(async next => {
+    if (frame.closing) return;
+    status = next.State; phase = next.Phase || ''; log = next.Log || '';
+    if (status === 'running' || status === 'authorizing') observedAttempt = true;
+    error = status === 'failed' || status === 'unavailable' ? next.Message || 'Update failed' : '';
+    await frame.enqueue(async () => { await frame.current?.update(); await frame.refreshHint(); });
+  });
   connect('settings', next => {
     shell = next; ready = true;
     return frame.enqueue(async () => { await frame.current?.update(); await frame.refreshHint(); });
-  });
+  }, undefined, undefined, () => updater.connect());
   globalThis.koyaUpdate = { window: win, settled: () => frame.settled, get status() { return status; }, openLog };
   return win;
 };

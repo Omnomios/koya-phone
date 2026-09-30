@@ -9,7 +9,7 @@ ARG DEV_GID=1000
 # The native build uses libudev supplied by Alpine's eudev development package.
 # Mesa drivers cover Intel/AMD and software Vulkan on typical Linux desktops.
 RUN apk add --no-cache \
-    bash coreutils util-linux dbus glib glib-dev build-base meson ninja pkgconf \
+    bash coreutils util-linux dbus glib glib-dev build-base meson ninja pkgconf py3-gobject3 \
     libevdev-dev eudev-dev polkit-dev wayland-dev curl gnupg socat \
     "hyprland=${HYPRLAND_VERSION}" squeekboard \
     gdk-pixbuf librsvg hicolor-icon-theme font-dejavu \

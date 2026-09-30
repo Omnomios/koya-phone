@@ -154,7 +154,7 @@ get_source() {
     fi
     for required in meson.build meson_options.txt hyprland.conf.in session.conf run.sh \
         start-hyprland.sh scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/run-settings.sh scripts/run-update.sh \
-        install/update-schedule.sh install/update-worker.sh applications/koya-update.desktop \
+        install/koya-update.initd install/org.koya.Update1.conf install/org.koya.update.policy install/update-worker.sh applications/koya-update.desktop \
         install/packages/runtime.list install/packages/build.list install/packages/koya.list; do
         [ -f "$source_dir/$required" ] || die "Source is missing $required"
     done
@@ -245,7 +245,7 @@ prepare_deployment() {
     as_login mkdir "$release"
     tar -cf "$work/deployment.tar" -C "$source_dir" apps assets native applications install/packages \
         scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/run-settings.sh scripts/run-update.sh \
-        install/fix-battery-gauge.sh install/update-schedule.sh install/update-worker.sh start-hyprland.sh run.sh \
+        install/fix-battery-gauge.sh install/koya-update.initd install/org.koya.Update1.conf install/org.koya.update.policy install/update-worker.sh start-hyprland.sh run.sh \
         meson.build meson_options.txt hyprland.conf.in session.conf README.md COPYING
     chmod 0644 "$work/deployment.tar"
     as_login tar -xf "$work/deployment.tar" -C "$release"
@@ -254,8 +254,8 @@ prepare_deployment() {
         as_login cp "$prefix/current/session.conf" "$release/session.conf"
     fi
     as_login meson setup "$release/build" "$release" -Dintegration_tests=false --buildtype=release
-    as_login meson compile -C "$release/build" koya-session koya-hyprland-display koya-launch-app koya-askpass
-    for binary in koya-session koya-hyprland-display koya-launch-app koya-askpass; do
+    as_login meson compile -C "$release/build" koya-session koya-hyprland-display koya-launch-app koya-askpass koya-update-service
+    for binary in koya-session koya-hyprland-display koya-launch-app koya-askpass koya-update-service; do
         [ -x "$release/build/$binary" ] || die "Missing built binary: $binary"
     done
     as_login chmod +x "$release/start-hyprland.sh" "$release/run.sh" \
@@ -353,7 +353,6 @@ configure_system() {
     ensure_service dbus
     ensure_service elogind
     ensure_service polkit
-    ensure_service atd
     # Leave running networking and hardware services alone. Starting an absent
     # NM service supplies the Wi-Fi UI; no connection is activated by this script.
     ensure_service networkmanager
@@ -362,8 +361,19 @@ configure_system() {
     as_root install -d -m 0755 /etc/koya-shell /etc/elogind/logind.conf.d \
         /usr/local/bin /usr/local/libexec /usr/share/wayland-sessions /var/lib/tinydm
     as_root install -m 0644 "$work/update.conf" /etc/koya-shell/update.conf
-    as_root install -m 0755 "$release/install/update-schedule.sh" /usr/local/libexec/koya-update-schedule
-    as_root install -m 0755 "$release/install/update-worker.sh" /usr/local/libexec/koya-update-worker
+    as_root install -d -m 0755 /etc/dbus-1/system.d /usr/share/polkit-1/actions
+    # Replace the executable atomically; the active service finishes its own
+    # update using its already mapped binary and is not restarted here.
+    as_root install -m 0755 "$release/build/koya-update-service" /usr/local/libexec/koya-update-service.new
+    as_root mv /usr/local/libexec/koya-update-service.new /usr/local/libexec/koya-update-service
+    as_root install -m 0755 "$release/install/koya-update.initd" /etc/init.d/koya-update
+    as_root install -m 0644 "$release/install/org.koya.Update1.conf" /etc/dbus-1/system.d/org.koya.Update1.conf
+    as_root install -m 0644 "$release/install/org.koya.update.policy" /usr/share/polkit-1/actions/org.koya.update.policy
+    as_root dbus-send --system --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ReloadConfig >/dev/null
+    as_root install -m 0755 "$release/install/update-worker.sh" /usr/local/libexec/koya-update-worker.new
+    as_root mv /usr/local/libexec/koya-update-worker.new /usr/local/libexec/koya-update-worker
+    as_root rm -f /usr/local/libexec/koya-update-schedule
+    ensure_service koya-update
     as_root install -m 0644 "$work/elogind.conf" /etc/elogind/logind.conf.d/90-koya-shell.conf
     as_root rc-service elogind reload
     as_root udevadm control --reload-rules

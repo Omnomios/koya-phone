@@ -13,8 +13,6 @@ polkit-elogind
 polkit-openrc
 openssh-client-default
 openssh-askpass
-at
-at-openrc
 eudev
 eudev-openrc
 iio-sensor-proxy

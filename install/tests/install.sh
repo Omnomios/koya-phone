@@ -44,9 +44,8 @@ if grep -qx polkit-gnome "$work/packages"; then exit 1; fi
 grep -qx openssh-askpass "$work/packages"
 grep -qx openssh-client-default "$work/packages"
 if grep -qx sudo "$work/packages"; then exit 1; fi
-grep -qx at "$work/packages"
-grep -qx at-openrc "$work/packages"
-grep -q 'ensure_service atd' "$TEST_INSTALL_ROOT/install.sh"
+if grep -Eq '^(at|at-openrc)$' "$work/packages"; then exit 1; fi
+grep -q 'ensure_service koya-update' "$TEST_INSTALL_ROOT/install.sh"
 grep -q "ensure_service iio-sensor-proxy" "$TEST_INSTALL_ROOT/install.sh"
 grep -q "subsystem-match=misc --sysname-match='fastrpc-\*'" "$TEST_INSTALL_ROOT/install.sh"
 if grep -Eq '^(python3|weston[^ ]*|wayland-dev|helix-plugins)$' "$work/packages"; then exit 1; fi
@@ -65,7 +64,7 @@ if (fetch http://example.invalid/file "$work/no-file"); then exit 1; fi
     mkdir -p "$work" "$archive/koya-phone-test"
     for required in meson.build meson_options.txt hyprland.conf.in session.conf run.sh \
         start-hyprland.sh scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/run-settings.sh scripts/run-update.sh \
-        install/update-schedule.sh install/update-worker.sh applications/koya-update.desktop \
+        install/koya-update.initd install/org.koya.Update1.conf install/org.koya.update.policy install/update-worker.sh applications/koya-update.desktop \
         install/packages/runtime.list install/packages/build.list install/packages/koya.list; do
         mkdir -p "$archive/koya-phone-test/$(dirname "$required")"
         : >"$archive/koya-phone-test/$required"
@@ -297,7 +296,7 @@ as_login() {
         case "$2" in
             setup) mkdir -p "$3" ;;
             compile)
-                for binary in koya-session koya-hyprland-display koya-launch-app koya-askpass; do
+                for binary in koya-session koya-hyprland-display koya-launch-app koya-askpass koya-update-service; do
                     printf '#!/bin/sh\nexit 0\n' >"$release/build/$binary"
                     chmod +x "$release/build/$binary"
                 done ;;
@@ -309,7 +308,7 @@ prepare_deployment
 [ -f "$release/apps/wallpaper.js" ]
 [ -f "$release/native/session.cpp" ]
 [ -f "$release/install/fix-battery-gauge.sh" ]
-[ -f "$release/install/update-schedule.sh" ]
+[ -f "$release/install/koya-update.initd" ]
 [ -f "$release/install/update-worker.sh" ]
 [ -f "$release/scripts/run-hyprland-shell.sh" ]
 [ -f "$release/scripts/run-update.sh" ]

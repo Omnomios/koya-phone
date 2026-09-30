@@ -66,12 +66,22 @@ To install from a downloaded checkout, run `sh ./install.sh --source-dir .`.
 The default installation directory is `~/.local/share/koya-shell/`. Its `current`
 symlink selects the active release. Open **Update Koya** from the app launcher
 to install the latest version from the configured repository and ref. The app
-uses `pkexec` to request authorization through the Koya authentication dialog
-and queues the installer with `atd`, outside the graphical session that tinydm
-stops. Save open work first;
-the current graphical session closes near the end of installation and a new
-one starts. Reopen Update Koya to check the new revision and recent output. A failed
-update leaves its log at `/var/log/koya-shell/update.log`.
+talks to the root-owned `koya-update` OpenRC service over the system bus
+(`org.koya.Update1`). The service asks Polkit to authorize the calling GUI;
+Koya's authentication dialog handles the password. One service owns the installer
+child and reports its actual exit result. Duplicate requests are rejected while
+authorization or installation is active. There is no `atd` job or update lock.
+
+Save open work first: tinydm restarts the graphical session near the end of
+installation. The system updater continues running, and the reopened app reads
+its current state. Closing the GUI does not stop an authorized update. Installer
+output is retained at `/var/log/koya-shell/update.log`; live state comes from the
+service, so old status files cannot leave a new session stuck on “updating”.
+The installer replaces the service binary atomically without restarting an
+active updater; the installed binary takes effect at the next service start.
+Existing `atd` installations are left alone because other applications may use
+them, but Koya no longer installs or uses `atd`.
+
 
 You can also rerun the installation command from a terminal outside the
 graphical session, such as SSH. Both paths install the latest available Koya

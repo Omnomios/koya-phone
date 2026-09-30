@@ -1,37 +1,12 @@
 #!/bin/sh
-# This file is submitted to atd by update-schedule.sh. It must remain a
-# standalone POSIX script: at copies it into the job when it is queued.
+# Run only by the system updater service. It owns authorization and lifetime.
 set -eu
-state_dir=/var/lib/koya-shell
-status=$state_dir/update.status
-phase=$state_dir/update.phase
-log=/var/log/koya-shell/update.log
 config=/etc/koya-shell/update.conf
-exec 9>/run/koya-update.lock
-flock -w 30 9 || exit 1
-install -d -m 0755 /var/log/koya-shell "$state_dir"
-: >"$log"
-chmod 0644 "$log"
-exec >>"$log" 2>&1
 work=
-finish() {
-    code=$?
-    trap - EXIT HUP INT TERM
-    if [ "$code" = 0 ]; then printf 'succeeded\n' >"$status"; echo 'Koya update completed.';
-    else printf 'failed\n' >"$status"; echo "Koya update failed (exit $code)."; fi
-    chmod 0644 "$status"
-    [ -z "$work" ] || rm -rf "$work"
-    exit "$code"
-}
-trap finish EXIT
+trap '[ -z "$work" ] || rm -rf "$work"' EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-printf 'download\n' >"$phase"
-chmod 0644 "$phase"
-printf 'running\n' >"$status"
-chmod 0644 "$status"
-
 # The config is installed by the root-run installer. Parse data as data, never
 # source it as shell code. The installer validates every value again.
 user= prefix= repo= ref= profile= apps=
@@ -59,7 +34,6 @@ curl --fail --silent --show-error --location --proto '=https' --proto-redir '=ht
 set -- --repo "$repo" --ref "$ref" --user "$user" --prefix "$prefix" --profile "$profile"
 [ "$apps" = 1 ] || set -- "$@" --no-apps
 echo 'Starting installation outside the graphical session...'
-printf 'install\n' >"$phase"
 cd /
 env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root USER=root LOGNAME=root \
     /bin/sh "$work/install.sh" "$@"

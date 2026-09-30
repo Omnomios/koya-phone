@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+description="Koya system updater"
+supervisor="supervise-daemon"
+command="/usr/local/libexec/koya-update-service"
+# Do not replace a running updater during its own installation.
+# A subsequent boot starts the newly installed binary.
+rc_cgroup_cleanup="yes"
+output_log="/var/log/koya-shell/update-service.log"
+error_log="$output_log"
+depend() {
+    need dbus
+    after polkit
+}
+start_pre() {
+    checkpath -d -m 0755 /var/log/koya-shell
+}
