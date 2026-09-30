@@ -5,6 +5,7 @@ set -eu
 [ "$(id -u)" = 0 ] || { printf 'koya-update: root required\n' >&2; exit 1; }
 state_dir=/var/lib/koya-shell
 status=$state_dir/update.status
+phase=$state_dir/update.phase
 log=/var/log/koya-shell/update.log
 worker=/usr/local/libexec/koya-update-worker
 [ -r /etc/koya-shell/update.conf ] && [ -x "$worker" ] || {
@@ -22,6 +23,8 @@ esac
 install -d -m 0755 /var/log/koya-shell
 printf 'Update queued. Waiting for atd to start the installer.\n' >"$log"
 chmod 0644 "$log"
+printf 'queue\n' >"$phase"
+chmod 0644 "$phase"
 printf 'queued\n' >"$status"
 chmod 0644 "$status"
 if ! at -f "$worker" now >/dev/null; then

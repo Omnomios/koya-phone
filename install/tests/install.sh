@@ -25,6 +25,7 @@ if sh "$shell_root/install.sh" --unknown >/dev/null 2>&1; then exit 1; fi
 cat >"$test_dir/check.sh" <<'CHECK'
 #!/bin/sh
 set -eu
+unset XDG_RUNTIME_DIR
 . "$TEST_INSTALL_DIR/library.sh"
 work=$TEST_INSTALL_DIR/inputs
 mkdir "$work"
@@ -38,7 +39,8 @@ grep -qx firefox "$work/packages"
 grep -qx alacritty "$work/packages"
 grep -qx iio-sensor-proxy "$work/packages"
 grep -qx iio-sensor-proxy-openrc "$work/packages"
-grep -qx polkit-gnome "$work/packages"
+grep -qx polkit-dev "$work/packages"
+if grep -qx polkit-gnome "$work/packages"; then exit 1; fi
 grep -qx openssh-askpass "$work/packages"
 grep -qx openssh-client-default "$work/packages"
 if grep -qx sudo "$work/packages"; then exit 1; fi
@@ -56,6 +58,36 @@ if valid_repo '../bad/repo'; then exit 1; fi
 if (safe_path '/home/user/path with spaces'); then exit 1; fi
 if (fetch http://example.invalid/file "$work/no-file"); then exit 1; fi
 
+# The recorded revision must be the exact archive fetched from a moving ref.
+(
+    work=$TEST_INSTALL_DIR/source-check
+    archive=$TEST_INSTALL_DIR/source-archive
+    mkdir -p "$work" "$archive/koya-phone-test"
+    for required in meson.build meson_options.txt hyprland.conf.in session.conf run.sh \
+        start-hyprland.sh scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/run-settings.sh scripts/run-update.sh \
+        install/update-schedule.sh install/update-worker.sh applications/koya-update.desktop \
+        install/packages/runtime.list install/packages/build.list install/packages/koya.list; do
+        mkdir -p "$archive/koya-phone-test/$(dirname "$required")"
+        : >"$archive/koya-phone-test/$required"
+    done
+    tar -czf "$archive/source.tar.gz" -C "$archive" koya-phone-test
+    source_dir=
+    repo=Omnomios/koya-phone; ref=master
+    curl() { printf '{\n  "sha": "a9dfb54089e01b69f413a9544fa0c6f35cce30d0",\n  "other": {}\n}\n' >"$work/source-commit.json"; }
+    fetch() { printf '%s\n' "$1" >"$work/source-url"; cp "$archive/source.tar.gz" "$2"; }
+    get_source >/dev/null
+    [ "$source_commit" = a9dfb54089e01b69f413a9544fa0c6f35cce30d0 ]
+    grep -q '/tar.gz/a9dfb54089e01b69f413a9544fa0c6f35cce30d0?' "$work/source-url"
+    [ -f "$source_dir/meson.build" ]
+    work=$TEST_INSTALL_DIR/source-fallback
+    mkdir "$work"
+    source_dir=
+    curl() { return 22; }
+    get_source >/dev/null
+    [ -z "$source_commit" ]
+    grep -q '/tar.gz/master?' "$work/source-url"
+)
+
 release=$TEST_INSTALL_DIR/release
 prefix=$TEST_INSTALL_DIR/deployment
 login_uid=10000
@@ -69,6 +101,10 @@ monitor = , preferred, auto, 2
 # Keep my tuning.
 exec-once = exec /old/scripts/run-hyprland-shell.sh
 exec-once = /duplicate/scripts/run-hyprland-shell.sh
+exec-once = /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+env = SSH_ASKPASS,/usr/lib/ssh/gtk-ssh-askpass
+env = SSH_ASKPASS_REQUIRE,force
+env = SUDO_ASKPASS,/usr/lib/ssh/gtk-ssh-askpass
 CONFIG
 cat >"$TEST_INSTALL_DIR/fixtures/tinydm" <<'LOGIN'
 # Keep unrelated settings.
@@ -78,24 +114,34 @@ SOME_SETTING=yes
 LOGIN
 as_login() {
     case "$1" in
-        Hyprland)
-            [ "$2" = --verify-config ] && [ "$3" = --config ] && [ -f "$4" ]
+        mkdir|rm) "$@" ;;
+        env)
+            [ "$2" = "XDG_RUNTIME_DIR=$release/.verify-runtime" ]
+            [ "$(stat -c %a "$release/.verify-runtime")" = 700 ]
+            [ "$3" = Hyprland ] && [ "$4" = --verify-config ] && [ "$5" = --config ] && [ -f "$6" ]
             printf 'config ok\n' ;;
         *) printf 'Unexpected command in offline render check: %s\n' "$1" >&2; exit 1 ;;
     esac
 }
+mv "$TEST_INSTALL_DIR/fixtures/hyprland.conf" "$TEST_INSTALL_DIR/fixtures/hyprland.saved"
 prepare_session_files
+[ ! -e "$release/.verify-runtime" ]
+grep -Fxq "env = SSH_ASKPASS,$prefix/current/build/koya-askpass" "$work/hyprland.conf"
+grep -Fxq "env = SUDO_ASKPASS,$prefix/current/build/koya-askpass" "$work/hyprland.conf"
+mv "$TEST_INSTALL_DIR/fixtures/hyprland.saved" "$TEST_INSTALL_DIR/fixtures/hyprland.conf"
+prepare_session_files
+[ ! -e "$release/.verify-runtime" ]
 [ "$(cat "$work/update.conf")" = "$(printf 'user=user\nprefix=%s\nrepo=Omnomios/koya-phone\nref=master\nprofile=generic\napps=0' "$prefix")" ]
-[ "$(grep -c '^exec-once' "$work/hyprland.conf")" = 2 ]
+[ "$(grep -c '^exec-once' "$work/hyprland.conf")" = 1 ]
 grep -Fxq "exec-once = exec $prefix/current/scripts/run-hyprland-shell.sh" "$work/hyprland.conf"
-grep -Fxq 'exec-once = /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1' "$work/hyprland.conf"
-grep -Fxq 'env = SSH_ASKPASS,/usr/lib/ssh/gtk-ssh-askpass' "$work/hyprland.conf"
+if grep -q 'polkit-gnome-authentication-agent' "$work/hyprland.conf"; then exit 1; fi
+grep -Fxq "env = SSH_ASKPASS,$prefix/current/build/koya-askpass" "$work/hyprland.conf"
 grep -Fxq 'env = SSH_ASKPASS_REQUIRE,force' "$work/hyprland.conf"
-grep -Fxq 'env = SUDO_ASKPASS,/usr/lib/ssh/gtk-ssh-askpass' "$work/hyprland.conf"
+grep -Fxq "env = SUDO_ASKPASS,$prefix/current/build/koya-askpass" "$work/hyprland.conf"
 grep -Fq '# Keep my tuning.' "$work/hyprland.conf"
 cp "$work/hyprland.conf" "$TEST_INSTALL_DIR/fixtures/hyprland.conf"
 prepare_session_files
-[ "$(grep -c '^exec-once' "$work/hyprland.conf")" = 2 ]
+[ "$(grep -c '^exec-once' "$work/hyprland.conf")" = 1 ]
 [ "$(grep -c '^env = .*ASKPASS' "$work/hyprland.conf")" = 3 ]
 grep -Fxq AUTOLOGIN_UID=10000 "$work/tinydm"
 grep -Fxq 'rc_cgroup_cleanup="yes"' "$work/tinydm"
@@ -245,12 +291,13 @@ done
 work=$TEST_INSTALL_DIR/deployment-work; mkdir "$work"
 cp "$TEST_INSTALL_DIR/repository-latest/koya-installed" "$work/koya-installed"
 login_user=fixture; ref=master; koya_version=latest; arch=aarch64
+source_commit=a9dfb54089e01b69f413a9544fa0c6f35cce30d0
 as_login() {
     if [ "$1" = meson ]; then
         case "$2" in
             setup) mkdir -p "$3" ;;
             compile)
-                for binary in koya-session koya-hyprland-display koya-launch-app; do
+                for binary in koya-session koya-hyprland-display koya-launch-app koya-askpass; do
                     printf '#!/bin/sh\nexit 0\n' >"$release/build/$binary"
                     chmod +x "$release/build/$binary"
                 done ;;
@@ -269,6 +316,7 @@ prepare_deployment
 [ -f "$release/apps/update.js" ]
 grep -Fxq "Exec=$prefix/current/scripts/run-update.sh" "$release/applications/koya-update.desktop"
 grep -Fxq "repository=$KOYA_REPOSITORY" "$release/install-record.txt"
+grep -Fxq "source_commit=$source_commit" "$release/install-record.txt"
 grep -Fxq 'koya-9.8.7-r9999' "$release/install-record.txt"
 grep -Fxq 'helix-plugin-dbus-9.8.7-r9999' "$release/install-record.txt"
 grep -Fxq 'helix-plugin-process-9.8.7-r9999' "$release/install-record.txt"

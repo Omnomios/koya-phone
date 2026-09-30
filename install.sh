@@ -126,14 +126,24 @@ platform() {
     fi
 }
 get_source() {
+    source_commit=
     if [ -n "$source_dir" ]; then
         source_dir=$(CDPATH= cd -- "$source_dir" && pwd -P)
     else
         valid_repo "$repo" || die 'Supply --repo OWNER/REPO (or set DEFAULT_REPO before publishing).'
         case "$ref" in ''|*[!a-zA-Z0-9_./-]*|/*|*..*) die 'Invalid GitHub ref.' ;; esac
+        # Pin the archive to the revision we record, so a moving branch cannot
+        # advance between resolving it and downloading the deployment.
+        encoded_ref=$(printf '%s' "$ref" | sed 's|/|%2F|g')
+        if curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 8 --max-time 20 -H 'Accept: application/vnd.github+json' \
+            --output "$work/source-commit.json" "https://api.github.com/repos/$repo/commits/$encoded_ref" 2>/dev/null; then
+            source_commit=$(sed -n 's/^[[:space:]]*"sha": "\([0-9a-f]\{40\}\)",/\1/p' "$work/source-commit.json" | sed -n '1p')
+        fi
+        archive_ref=${source_commit:-$ref}
         # Moving refs can leave a cached archive behind a freshly fetched
         # bootstrap script. A unique URL makes each install resolve the ref.
-        source_url=https://codeload.github.com/$repo/tar.gz/$ref?koya_cache_bust=$(date +%s)-$$
+        source_url=https://codeload.github.com/$repo/tar.gz/$archive_ref?koya_cache_bust=$(date +%s)-$$
         say "Downloading $repo ($ref)..."
         fetch "$source_url" "$work/source.tar.gz"
         tar -tzf "$work/source.tar.gz" >"$work/archive-files"
@@ -244,8 +254,8 @@ prepare_deployment() {
         as_login cp "$prefix/current/session.conf" "$release/session.conf"
     fi
     as_login meson setup "$release/build" "$release" -Dintegration_tests=false --buildtype=release
-    as_login meson compile -C "$release/build" koya-session koya-hyprland-display koya-launch-app
-    for binary in koya-session koya-hyprland-display koya-launch-app; do
+    as_login meson compile -C "$release/build" koya-session koya-hyprland-display koya-launch-app koya-askpass
+    for binary in koya-session koya-hyprland-display koya-launch-app koya-askpass; do
         [ -x "$release/build/$binary" ] || die "Missing built binary: $binary"
     done
     as_login chmod +x "$release/start-hyprland.sh" "$release/run.sh" \
@@ -262,36 +272,48 @@ prepare_deployment() {
     {
         printf 'source=%s\nref=%s\nkoya=%s\nrepository=%s\narch=%s\nprofile=%s\nkey=%s\n' \
             "${source_url:-local:$source_dir}" "$ref" "$koya_version" "$KOYA_REPOSITORY" "$arch" "$profile" "$KOYA_KEY"
+        [ -z "${source_commit:-}" ] || printf 'source_commit=%s\n' "$source_commit"
         [ ! -f "$work/source.tar.gz" ] || sha256sum "$work/source.tar.gz" | awk '{print "source_sha256=" $1}'
         cat "$work/koya-installed"
     } >"$work/install-record.txt"
     as_login cp "$work/install-record.txt" "$release/install-record.txt"
 }
 prepare_session_files() {
-    awk -v command="$prefix/current/scripts/run-hyprland-shell.sh" \
-        '{sub(/@SHELL_COMMAND@/, command); print}' "$release/hyprland.conf.in" >"$work/hyprland.conf"
-    # Preserve compositor tuning on reruns. Add only missing authentication
-    # wiring, leaving any custom askpass helper or policy agent in place.
+    askpass=$prefix/current/build/koya-askpass
+    awk -v command="$prefix/current/scripts/run-hyprland-shell.sh" -v askpass="$askpass" \
+        '{sub(/@SHELL_COMMAND@/, command); sub(/@ASKPASS_COMMAND@/, askpass); print}' \
+        "$release/hyprland.conf.in" >"$work/hyprland.conf"
+    # Preserve compositor tuning on reruns. Remove the old polkit agent and
+    # replace default GTK askpass paths; keep user-supplied helpers.
     if [ -f /etc/koya-shell/hyprland.conf ]; then
-        awk -v command="$prefix/current/scripts/run-hyprland-shell.sh" \
+        awk -v command="$prefix/current/scripts/run-hyprland-shell.sh" -v askpass="$askpass" \
             '/^[[:space:]]*exec-once[[:space:]]*=.*run-hyprland-shell\.sh/ {if (!shell) print "exec-once = exec " command; shell=1; next} \
-             /^[[:space:]]*exec-once[[:space:]]*=.*(polkit|policykit)/ {agent=1} \
-             /^[[:space:]]*env[[:space:]]*=[[:space:]]*SSH_ASKPASS,/ {ssh=1} \
+             /^[[:space:]]*exec-once[[:space:]]*=.*(polkit|policykit)/ {next} \
+             /^[[:space:]]*env[[:space:]]*=[[:space:]]*SSH_ASKPASS,/ {
+                 ssh=1; if ($0 ~ /\/usr\/lib\/ssh\/gtk-ssh-askpass/) print "env = SSH_ASKPASS," askpass; else print; next
+             } \
              /^[[:space:]]*env[[:space:]]*=[[:space:]]*SSH_ASKPASS_REQUIRE,/ {ssh_require=1} \
-             /^[[:space:]]*env[[:space:]]*=[[:space:]]*SUDO_ASKPASS,/ {sudo=1} \
+             /^[[:space:]]*env[[:space:]]*=[[:space:]]*SUDO_ASKPASS,/ {
+                 sudo=1; if ($0 ~ /\/usr\/lib\/ssh\/gtk-ssh-askpass/) print "env = SUDO_ASKPASS," askpass; else print; next
+             } \
              {print} \
              END {if (!shell) print "exec-once = exec " command; \
-                  if (!agent) print "exec-once = /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1"; \
-                  if (!ssh) print "env = SSH_ASKPASS,/usr/lib/ssh/gtk-ssh-askpass"; \
+                  if (!ssh) print "env = SSH_ASKPASS," askpass; \
                   if (!ssh_require) print "env = SSH_ASKPASS_REQUIRE,force"; \
-                  if (!sudo) print "env = SUDO_ASKPASS,/usr/lib/ssh/gtk-ssh-askpass"}' \
+                  if (!sudo) print "env = SUDO_ASKPASS," askpass}' \
             /etc/koya-shell/hyprland.conf >"$work/hyprland.conf"
     fi
     chmod 0644 "$work/hyprland.conf"
     # Verify syntax only: no compositor, DRM session or graphical test is started.
-    as_login Hyprland --verify-config --config "$work/hyprland.conf" >"$work/verify-config.log" 2>&1 || {
+    # Scheduled self-updates run outside the login session and have no
+    # XDG_RUNTIME_DIR. Hyprland requires one even for --verify-config.
+    verify_runtime=$release/.verify-runtime
+    as_login mkdir -m 0700 "$verify_runtime"
+    as_login env "XDG_RUNTIME_DIR=$verify_runtime" Hyprland --verify-config --config "$work/hyprland.conf" >"$work/verify-config.log" 2>&1 || {
+        as_login rm -rf "$verify_runtime"
         cat "$work/verify-config.log" >&2; die 'Hyprland rejected the prepared configuration.';
     }
+    as_login rm -rf "$verify_runtime"
     grep -q 'config ok' "$work/verify-config.log" || { cat "$work/verify-config.log" >&2; die 'Hyprland config verification did not report success.'; }
     printf '#!/bin/sh\nexec "%s/current/start-hyprland.sh" "$@"\n' "$prefix" >"$work/launcher"
     cat >"$work/session.desktop" <<'DESKTOP'

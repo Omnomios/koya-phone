@@ -6,3 +6,4 @@ pkgconf
 glib-dev
 libevdev-dev
 eudev-dev
+polkit-dev

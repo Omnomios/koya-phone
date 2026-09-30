@@ -51,11 +51,13 @@ export TEST_UPDATE_JOB=$test_dir/job TEST_UPDATE_INSTALLER=$test_dir/installer
 export PATH=$test_dir/bin:$PATH
 sh "$test_dir/schedule" >/dev/null
 [ "$(cat "$test_dir/state/update.status")" = queued ]
+[ "$(cat "$test_dir/state/update.phase")" = queue ]
 [ -f "$test_dir/job" ]
 if sh "$test_dir/schedule" >"$test_dir/duplicate.log" 2>&1; then exit 1; fi
 grep -q 'already in progress' "$test_dir/duplicate.log"
 sh "$test_dir/job"
 [ "$(cat "$test_dir/state/update.status")" = succeeded ]
+[ "$(cat "$test_dir/state/update.phase")" = install ]
 grep -q 'Installer arguments: --repo Omnomios/koya-phone --ref master --user alice --prefix /home/alice/.local/share/koya-shell --profile generic --no-apps' "$test_dir/log/update.log"
 cat >"$test_dir/bin/curl" <<'STUB'
 #!/bin/sh
@@ -65,6 +67,7 @@ chmod +x "$test_dir/bin/curl"
 sh "$test_dir/schedule" >/dev/null
 if sh "$test_dir/job"; then exit 1; fi
 [ "$(cat "$test_dir/state/update.status")" = failed ]
+[ "$(cat "$test_dir/state/update.phase")" = download ]
 grep -q 'Koya update failed' "$test_dir/log/update.log"
 cat >"$test_dir/bin/at" <<'STUB'
 #!/bin/sh
@@ -73,5 +76,6 @@ STUB
 chmod +x "$test_dir/bin/at"
 if sh "$test_dir/schedule" >"$test_dir/queue-error.log" 2>&1; then exit 1; fi
 [ "$(cat "$test_dir/state/update.status")" = failed ]
+[ "$(cat "$test_dir/state/update.phase")" = queue ]
 grep -q 'could not queue' "$test_dir/queue-error.log"
 printf 'PASS: graphical update queues one system job and records worker success/failure\n'

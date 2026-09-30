@@ -4,9 +4,10 @@ project('koya-phone-dev', 'cpp', 'c', version: '0.1.0',
 # Development depends on the application's native sources. The application
 # build and phone deployment have no dependency on this environment.
 gio = dependency('gio-unix-2.0')
-deps = [gio, dependency('libevdev'), dependency('libudev')]
+deps = [gio, dependency('libevdev'), dependency('libudev'), dependency('polkit-agent-1')]
 coordinator = executable('koya-session-dev', '../native/session.cpp',
   dependencies: deps, cpp_args: ['-DKOYA_TESTING'])
+executable('koya-askpass', '../native/askpass.cpp', dependencies: gio)
 display = executable('koya-hyprland-display-dev', '../native/hyprland-display.cpp',
   dependencies: gio, cpp_args: ['-DKOYA_TESTING'])
 services = executable('koya-dev-services', 'mocks/services.cpp', dependencies: gio)

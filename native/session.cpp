@@ -25,6 +25,7 @@
 #include "notification-transport.hpp"
 #include "backlight.hpp"
 #include "settings.hpp"
+#include "authentication.hpp"
 
 static constexpr const char *BUS = "org.koya.Shell1", *PATH = "/org/koya/Shell1";
 static constexpr const char *LOGIN = "org.freedesktop.login1", *LOGIN_PATH = "/org/freedesktop/login1";
@@ -47,6 +48,13 @@ static const char XML[] = R"XML(<node><interface name="org.koya.Shell1">
  <method name="ReplyNotification"><arg type="u" direction="in"/><arg type="a{sv}" direction="in"/></method>
  <method name="EmitNotification"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="u" direction="in"/><arg type="s" direction="in"/><arg type="u" direction="in"/></method>
  <signal name="NotificationRequest"><arg type="s"/></signal>
+ <method name="Askpass"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
+ <method name="AuthenticationRespond"><arg type="u" direction="in"/><arg type="s" direction="in"/></method>
+ <method name="AuthenticationCancel"><arg type="u" direction="in"/></method>
+ <signal name="AuthenticationBegin"><arg type="u"/><arg type="s"/><arg type="s"/><arg type="s"/></signal>
+ <signal name="AuthenticationPrompt"><arg type="u"/><arg type="s"/><arg type="b"/></signal>
+ <signal name="AuthenticationMessage"><arg type="u"/><arg type="s"/><arg type="b"/></signal>
+ <signal name="AuthenticationEnd"><arg type="u"/></signal>
  <method name="GetApplications"><arg type="aa{sv}" direction="out"/></method>
  <method name="ResolveIcon"><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
  <method name="GetDesktopState"><arg type="a{sv}" direction="out"/></method>
@@ -68,6 +76,9 @@ static std::string protocol_xml() {
     xml += R"XML(<interface name="org.koya.Shell1.Test">
  <method name="Button"><arg type="u" direction="in"/><arg type="u" direction="in"/></method>
  <method name="DeviceLost"/><method name="Idle"/><method name="Activity"/><method name="PowerSupplyChanged"/>
+ <method name="AuthenticationDemo"/>
+ <method name="AuthenticationAnswer"><arg type="u" direction="in"/><arg type="s" direction="in"/></method>
+ <method name="AuthenticationDismiss"><arg type="u" direction="in"/></method>
  </interface>)XML";
 #endif
     return xml + "</node>";
@@ -114,11 +125,13 @@ class Session {
     GMainLoop *loop = g_main_loop_new(nullptr, FALSE);
     GDBusConnection *bus{}, *system{};
     GDBusNodeInfo *node{};
-    std::array<Component, 6> components;
+    std::array<Component, 7> components;
     Desktop desktop;
     std::unique_ptr<SystemStatus> status;
     std::unique_ptr<Keyboard> keyboard;
     std::unique_ptr<NotificationTransport> notification_transport;
+    std::unique_ptr<AuthenticationAgent> authentication;
+    guint authentication_retry{};
     bool keyboard_available = false, keyboard_visible = false;
     std::string desktop_view = "closed";
     bool desktop_mapped = false;
@@ -146,13 +159,15 @@ class Session {
     guint monitor_source{};
     std::map<std::string, std::unique_ptr<Device>> devices;
     Session(std::string dir): desktop(dir), root(std::move(dir)) {
-        const char *names[] = {"wallpaper", "top-bar", "power-menu", "lock-screen", "navigation", "keyboard"};
+        const char *names[] = {"wallpaper", "top-bar", "power-menu", "lock-screen", "navigation", "keyboard", "authentication"};
         for (unsigned i = 0; i < components.size(); i++) {
             components[i].owner = this;
             components[i].name = names[i];
         }
     }
     ~Session() {
+        remove_timer(authentication_retry);
+        authentication.reset();
         notification_transport.reset();
         keyboard.reset();
         status.reset();
@@ -424,6 +439,7 @@ class Session {
         }
         GSubprocessLauncher*l = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
         g_subprocess_launcher_set_child_setup(l, child_setup, GINT_TO_POINTER(getpid()), nullptr);
+        if (c.name == "authentication") g_subprocess_launcher_unsetenv(l, "KOYA_DBUS_DEBUG");
         std::string logdir = std::string(g_get_user_state_dir()) + "/koya-shell";
         g_mkdir_with_parents(logdir.c_str(), 0700);
         int logfd = open((logdir + "/" + c.name + ".log").c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
@@ -483,6 +499,10 @@ class Session {
     }
     void exited(Component&c) {
         c.status = "stopped";
+        if (c.name == "authentication" && authentication) {
+            remove_timer(authentication_retry);
+            authentication->stop();
+        }
         if (c.name == "top-bar" && notification_transport) notification_transport->detach();
         if (c.name == "navigation") {
             desktop_view = "closed";
@@ -863,6 +883,8 @@ class Session {
             return;
         }
         stopping = true;
+        remove_timer(authentication_retry);
+        if (authentication) authentication->stop();
         hide_keyboard();
         update_idle();
         remove_timer(idle_dispatch);
@@ -1028,6 +1050,18 @@ class Session {
                 guint32 key, value;
                 g_variant_get(args, "(uu)", &key, &value);
                 s.button(key, value);
+            } else if (!strcmp(name, "AuthenticationDemo")) {
+                g_dbus_connection_emit_signal(s.bus, nullptr, PATH, BUS, "AuthenticationBegin",
+                    g_variant_new("(usss)", G_MAXUINT, "org.koya.Test", "Authenticate to test the Koya dialog", "user"), nullptr);
+                g_dbus_connection_emit_signal(s.bus, nullptr, PATH, BUS, "AuthenticationPrompt",
+                    g_variant_new("(usb)", G_MAXUINT, "Password:", FALSE), nullptr);
+            } else if (!strcmp(name, "AuthenticationAnswer")) {
+                guint id; const char *answer;
+                g_variant_get(args, "(u&s)", &id, &answer);
+                s.authentication->respond(id, answer);
+            } else if (!strcmp(name, "AuthenticationDismiss")) {
+                guint id; g_variant_get(args, "(u)", &id);
+                s.authentication->cancel(id);
             } else if (!strcmp(name, "Activity")) {
                 s.display_request("a", 'a');
             } else if (!strcmp(name, "Idle")) {
@@ -1084,6 +1118,42 @@ class Session {
         if (!strcmp(name, "RegisterNotifications")) {
             if (!s.caller_is(i, s.components[1]) || !s.notification_transport->attach(g_dbus_method_invocation_get_sender(i))) {
                 fail(i, "Cannot register notification frontend; another server may own the notification name"); return;
+            }
+            g_dbus_method_invocation_return_value(i, nullptr); return;
+        }
+        if (!strcmp(name, "Askpass")) {
+            if (!s.authentication || s.components[6].status != "ready" || s.stopping) {
+                fail(i, "Koya authentication dialog is unavailable"); return;
+            }
+            const char *question, *mode;
+            g_variant_get(args, "(&s&s)", &question, &mode);
+            s.authentication->ask(question, mode, i);
+            return;
+        }
+        if (!strcmp(name, "AuthenticationRespond") || !strcmp(name, "AuthenticationCancel")) {
+            if (!s.authentication || !s.caller_is(i, s.components[6])) {
+                fail(i, "Authentication requires the owned Koya dialog"); return;
+            }
+            guint id;
+            if (!strcmp(name, "AuthenticationRespond")) {
+                const char *response;
+                g_variant_get(args, "(u&s)", &id, &response);
+#ifdef KOYA_TESTING
+                if (id == G_MAXUINT) {
+                    g_dbus_connection_emit_signal(s.bus, nullptr, PATH, BUS, "AuthenticationEnd", g_variant_new("(u)", id), nullptr);
+                    g_dbus_method_invocation_return_value(i, nullptr); return;
+                }
+#endif
+                s.authentication->respond(id, response);
+            } else {
+                g_variant_get(args, "(u)", &id);
+#ifdef KOYA_TESTING
+                if (id == G_MAXUINT) {
+                    g_dbus_connection_emit_signal(s.bus, nullptr, PATH, BUS, "AuthenticationEnd", g_variant_new("(u)", id), nullptr);
+                    g_dbus_method_invocation_return_value(i, nullptr); return;
+                }
+#endif
+                s.authentication->cancel(id);
             }
             g_dbus_method_invocation_return_value(i, nullptr); return;
         }
@@ -1210,6 +1280,15 @@ class Session {
                     if (c.name == "lock-screen" && s.screen == "off" && !s.display_power(false)) s.screen = "locked";
                     if (c.name == "power-menu" && s.menu == "starting") {
                         s.menu = "open";
+                    }
+                    if (c.name == "authentication" && s.authentication && !s.authentication->start() && !s.authentication_retry) {
+                        s.authentication_retry = g_timeout_add_seconds(3, [](gpointer data)->gboolean {
+                            auto *session = static_cast<Session*>(data);
+                            if (session->stopping || session->components[6].status != "ready" || session->authentication->start()) {
+                                session->authentication_retry = 0; return G_SOURCE_REMOVE;
+                            }
+                            return G_SOURCE_CONTINUE;
+                        }, &s);
                     }
                     s.changed();
                 }
@@ -1449,6 +1528,7 @@ class Session {
             }
         g_dbus_connection_set_exit_on_close(bus, FALSE);
         notification_transport = std::make_unique<NotificationTransport>(bus);
+        authentication = std::make_unique<AuthenticationAgent>(bus);
         g_signal_connect(bus, "closed", G_CALLBACK(+[](GDBusConnection*, gboolean, GError*, gpointer p) {
             static_cast<Session*>(p)->stop();
         }), this);
@@ -1500,6 +1580,7 @@ class Session {
                 })g_unix_signal_add(sig, [](gpointer p)->gboolean{static_cast<Session*>(p)->stop(); return G_SOURCE_REMOVE;}, this);
         start(components[0]);
         start(components[1]);
+        start(components[6]);
         desktop.home_selected = [this] { hide_keyboard(); };
         if (desktop.init([this](bool applications) {
             if (applications) g_dbus_connection_emit_signal(bus, nullptr, PATH, BUS, "ApplicationsChanged", nullptr, nullptr);

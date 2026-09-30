@@ -27,11 +27,12 @@ button when an app does not open it automatically.
 
 ## Authentication
 
-Apps that request administrator access through polkit open a password dialog in
+Apps that request administrator access through polkit open Koya's password dialog in
 the graphical session, including Power off and Restart when authorization is
-required. SSH from a terminal or app launched by Koya uses a
-graphical askpass dialog when it needs a password or key passphrase. For a
-graphical `sudo` prompt on systems with real sudo, use `sudo -A`. The default
+required. SSH from a terminal or app launched by Koya uses the same dialog
+when it needs a password or key passphrase. SSH key-use confirmations show
+**Allow** and **Cancel** instead of a password field. For a graphical `sudo`
+prompt on systems with real sudo, use `sudo -A`. The default
 postmarketOS `doas-sudo-shim` does not support that option; Koya's updater uses
 polkit instead. Ordinary terminal privilege prompts still read from the
 terminal. Incoming SSH logins authenticate on the remote client, so they do
@@ -40,10 +41,14 @@ not open a prompt on the phone.
 ## Updating Koya
 
 Open **Update Koya** from the app launcher, save your work, then tap **Install
-update**. Enter your administrator password in the polkit dialog. The app
-shows download and build progress from the installer log. Koya closes when the
-new session is selected, then starts again. Reopen the app to see the final
-result. If the graphical session does not return, connect over SSH and inspect
+update**. Enter your administrator password in the Koya dialog. The app
+shows the installed and repository commit hashes and how many commits the
+installed shell is behind the configured ref. Older installations without a
+recorded commit show an unknown installed revision until the next install.
+The app shows download and build progress from the installer log. Koya closes
+when the new session is selected, then starts again. Reopen the app to check
+the new revision or view recent installer output. If the graphical session
+does not return, connect over SSH and inspect
 `/var/log/koya-shell/update.log`.
 
 ## Wi-Fi

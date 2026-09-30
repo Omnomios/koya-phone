@@ -183,9 +183,10 @@ DESKTOP
         -e 's/^# Koya phone shell; syntax for Hyprland 0.51.x.$/# Koya local development; syntax for Hyprland 0.54.x./' \
         -e 's/^layerrule = noanim, /layerrule = no_anim on, match:namespace /' \
         -e 's/^windowrule = fullscreenstate 1 0, class:/windowrule = fullscreen_state 1 0, match:class /' \
-        -e '/^exec-once = \/usr\/lib\/polkit-gnome\/polkit-gnome-authentication-agent-1$/d' \
         -e '/^[[:space:]]*disable_hyprland_qtutils_check = /d' \
-        -e "s|@SHELL_COMMAND@|$run/shell.sh|" "$root/hyprland.conf.in" >"$config"
+        -e "s|@SHELL_COMMAND@|$run/shell.sh|" \
+        -e "s|@ASKPASS_COMMAND@|$KOYA_DEV_BUILD/koya-askpass|" \
+        "$root/hyprland.conf.in" >"$config"
     local key action
     for key in F5 F6 F7 F8 F9 F10; do
         case "$key" in F5) action=restart;; F6) action=power-menu;; F7) action=power;;
@@ -299,7 +300,7 @@ if [[ -n "$keyboard" ]]; then keyboard=$(resolve_executable "$keyboard"); else k
 if (( ! no_build )); then
     bash "$root/dev/build.sh" "$build"
 fi
-for binary in koya-session-dev koya-hyprland-display-dev koya-dev-services koya-launch-app; do
+for binary in koya-session-dev koya-hyprland-display-dev koya-dev-services koya-launch-app koya-askpass; do
     [[ -x "$build/$binary" ]] || fail "Missing $build/$binary; rerun without --no-build."
 done
 [[ -f "$build/libkoya-dev-wayland-size.so" ]] || fail "Missing nested-window sizing helper; rerun without --no-build."

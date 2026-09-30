@@ -145,7 +145,7 @@ export default async () => {
       try {
         if (challenge) {
           // A layer-shell overlay sits above normal application windows. Let
-          // polkit's password dialog receive both input and visible pixels.
+          // Koya's authentication overlay receive both input and visible pixels.
           await UI.setEnabled(win, root, false);
           await Compositor.setKeyboardInteractivity(win, 'none');
           await Compositor.setPointerEvents(win, false);

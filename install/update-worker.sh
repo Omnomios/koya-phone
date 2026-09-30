@@ -4,6 +4,7 @@
 set -eu
 state_dir=/var/lib/koya-shell
 status=$state_dir/update.status
+phase=$state_dir/update.phase
 log=/var/log/koya-shell/update.log
 config=/etc/koya-shell/update.conf
 exec 9>/run/koya-update.lock
@@ -26,6 +27,8 @@ trap finish EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+printf 'download\n' >"$phase"
+chmod 0644 "$phase"
 printf 'running\n' >"$status"
 chmod 0644 "$status"
 
@@ -56,6 +59,7 @@ curl --fail --silent --show-error --location --proto '=https' --proto-redir '=ht
 set -- --repo "$repo" --ref "$ref" --user "$user" --prefix "$prefix" --profile "$profile"
 [ "$apps" = 1 ] || set -- "$@" --no-apps
 echo 'Starting installation outside the graphical session...'
+printf 'install\n' >"$phase"
 cd /
 env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root USER=root LOGNAME=root \
     /bin/sh "$work/install.sh" "$@"

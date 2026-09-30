@@ -120,7 +120,7 @@ runner can also run directly on the host.
   D-Bus/process plugins and engine assets. The runtime must be compatible with
   your host's architecture and C library. The published Alpine APKs work in the
   container environment described above.
-- Bash, Meson, Ninja, pkg-config, a C/C++ compiler, GLib/GIO, libevdev, libudev and Wayland client
+- Bash, Meson, Ninja, pkg-config, a C/C++ compiler, GLib/GIO, libevdev, libudev, polkit development libraries and Wayland client
   development headers. The runtime also needs `dbus-run-session`, `gdbus`,
   `setsid`, `timeout` and `realpath`.
 - GdkPixbuf with SVG support for application icons.

@@ -78,7 +78,12 @@ export async function button(win, parent, label, width, height, handler, options
     options.onIcon?.(glyph);
   }
   // Full width: the column does not centre narrower children across its axis.
-  if (label) await text(win, id, label, options.size || 19, width, options.labelHeight || 32, options.labelColour || options.accent || CREAM, options.font);
+  if (label) {
+    // Create first: `onLabel?.(await text(...))` would skip creating the label
+    // entirely when no callback is given.
+    const labelId = await text(win, id, label, options.size || 19, width, options.labelHeight || 32, options.labelColour || options.accent || CREAM, options.font);
+    options.onLabel?.(labelId);
+  }
   return id;
 }
 
