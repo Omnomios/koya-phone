@@ -44,7 +44,13 @@ export function connect(component, onState = () => {}, onDesktop = () => {}, onA
           // The first signal argument is already the full state dictionary.
           // The desktop controller serializes these snapshots itself.
           const state = event.args?.[0];
-          if ((component === 'navigation' || component === 'top-bar') && typeof state?.Active === 'boolean') {
+          if (component === 'lock-screen' && typeof state?.Active === 'boolean') {
+            // Preserve every off/inactive snapshot, even when wake follows it
+            // before a GetState refresh could observe the interruption.
+            configureHaptics(state);
+            configureWallpaper(state).catch(error => Log.error('Shell wallpaper: ' + error));
+            Promise.resolve(onState(state)).catch(error => Log.error('Shell state: ' + error));
+          } else if ((component === 'navigation' || component === 'top-bar') && typeof state?.Active === 'boolean') {
             configureHaptics(state);
             configureWallpaper(state).then(() => onState(state)).catch(error => Log.error('Shell state: ' + error));
           } else refresh().catch(error => Log.error('Shell state: ' + error));

@@ -376,9 +376,10 @@ export default async () => {
     };
     credentialField = await credentialInput(win, page.el, { width: metric.width, profile,
       mode: step === 'current' ? credentialMode(state, state.UserName) : setup.mode, allowMode: step === 'current',
-      compact: frame.size.x > frame.size.y, rowHeight: frame.size.x > frame.size.y ? 32 : 48, onSubmit: advance });
-    const next = await button(win, page.el, step === 'confirm' ? 'Save' : 'Continue', metric.width, 48, advance, { colour: ORANGE });
-    page.items.push(next);return page;
+      compact: frame.size.x > frame.size.y, rowHeight: frame.size.x > frame.size.y ? 32 : 48, onSubmit: advance,
+      // The keyboard's Enter key carries the step's action, as on the lock screen.
+      enterLabel: step === 'confirm' ? 'Save' : 'Continue' });
+    page.items.push(credentialField.root); return page;
   };
 
   // ---- Navigation --------------------------------------------------------

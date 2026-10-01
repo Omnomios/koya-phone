@@ -71,7 +71,7 @@ administrator prompt; the installer continues after the shell closes.
 
 Tap the top bar or swipe down for notifications, brightness and Wi-Fi settings.
 Press the power button briefly to switch the screen off or wake it; hold it to
-open the power menu. Enter your password or PIN to unlock.
+open the power menu. Swipe the lock screen up, then enter your password or PIN to unlock.
 
 The [user guide](docs/user-guide.md) covers Wi-Fi, notifications, screen timeouts,
 volume, brightness and vibration settings.

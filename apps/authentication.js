@@ -4,16 +4,16 @@ import * as Event from 'Helix/Event';
 import * as Engine from 'Helix/Engine';
 import * as Log from 'Helix/Log';
 import { session as Bus } from 'Module/dbus';
-import { credentialInput } from './credential-input.js';
+import { credentialInput, credentialKeyboardHeight } from './credential-input.js';
 import { credentialMode } from './credential-model.js';
 import { button, label, text } from './touch-ui.js';
-import { CREAM, ORANGE, INK, CARD, MUTED, GUTTER, SPACE, TYPE } from './theme.js';
+import { CREAM, ORANGE, INK, CARD, MUTED, CLEAR, GUTTER, SPACE, RADIUS, TYPE, TOUCH } from './theme.js';
 
 const NAME = 'org.koya.Shell1', PATH = '/org/koya/Shell1';
 const call = (method, signature = '', ...args) => Bus.call(NAME, PATH, NAME, method, signature, ...args);
 const clean = text => String(text || '').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 512);
 export default async () => {
-  let win, root, input, statusLabel, submitLabel, active, size, profile = {}, waiting = false, sending = false;
+  let win, root, input, statusLabel, active, size, profile = {}, waiting = false, sending = false;
   let queue = Promise.resolve();
   const enqueue = job => { queue = queue.then(job).catch(() => Log.error('Authentication dialog could not update')); return queue; };
   const hide = async () => {
@@ -34,7 +34,7 @@ export default async () => {
       await call('AuthenticationRespond', 'us', request.id, answer);
     } catch (_) {
       if (active === request && win) {
-        waiting = true; await input?.setEnabled(true); input?.focus();
+        waiting = true; await input?.setEnabled(true); input?.focus(); input?.reject();
         await UI.setTextString(win, statusLabel, 'Check your password or PIN and try again');
       }
     } finally { if (active === request) sending = false; }
@@ -46,30 +46,45 @@ export default async () => {
     await Compositor.setWindowRenderingEnabled(win, false);
     try {
       if (root) await UI.destroyElement(win, root);
+      // Same structure as the lock screen: the keyboard docks to the bottom
+      // edge, the request and its field sit directly above it, Cancel sits
+      // where back always sits, and Enter carries the action.
       const landscape = size.x > size.y;
-      const width = Math.min(landscape ? 1100 : 520, size.x - 2 * GUTTER), side = Math.round((size.x - width) / 2);
-      root = await UI.createElement(win, { renderable: { type: 'box', colour: [0.025, 0.055, 0.04, 0.97] },
-        layout: { type: 'column', gap: SPACE.s, padding: { l: side, r: side, t: landscape ? 8 : Math.round(size.y * 0.10), b: GUTTER } },
-        item: { size }, contentAlign: 'fill' });
+      const keyboard = active.noInput ? 0 : credentialKeyboardHeight(size);
+      const width = Math.min(landscape ? 520 : 420, size.x - 2 * GUTTER);
+      const full = size.x - 2 * GUTTER;
+      root = await UI.createElement(win, { renderable: { type: 'box', colour: [0.025, 0.055, 0.04, 0.97] }, item: { size }, contentAlign: 'fill' });
       await UI.attachRoot(win, root);
-      await text(win, root, 'Authentication', TYPE.heading, width, 32);
-      await label(win, root, active.message, TYPE.body, width, landscape ? 38 : 64, CREAM);
-      await label(win, root, active.user, TYPE.caption, width, 24, MUTED);
-      await label(win, root, active.question || '', TYPE.caption, width, 26, MUTED);
+      const body = await UI.createElement(win, { layout: { type: 'column', alignItems: 'center', padding: { l: GUTTER, r: GUTTER, t: SPACE.s, b: SPACE.m } },
+        item: { position: { x: 0, y: 0 }, size: { x: size.x, y: size.y - keyboard } } });
+      await UI.attach(win, root, body);
+      const top = await UI.createElement(win, { layout: { type: 'row', alignItems: 'center' }, item: { size: { x: full, y: TOUCH } } });
+      await UI.attach(win, body, top);
+      if (active.mode !== 'none') await button(win, top, 'Cancel', 96, TOUCH, cancel, { colour: CLEAR, labelColour: MUTED, size: TYPE.body, radius: RADIUS.control });
+      await UI.attach(win, body, await UI.createElement(win, { item: { size: { x: full, y: 0 }, flexGrow: 1 } }));
+      // What is asking, and as whom.
+      await text(win, body, 'Authentication required', TYPE.heading, width, 32, CREAM, undefined, 'left');
+      await label(win, body, active.message, TYPE.body, width, landscape ? 30 : 52, MUTED);
+      await label(win, body, active.user ? 'As ' + active.user : '', TYPE.caption, width, 24, MUTED);
+      if (active.question) await label(win, body, active.question, TYPE.caption, width, 24, MUTED);
+      await UI.attach(win, body, await UI.createElement(win, { item: { size: { x: full, y: SPACE.m } } }));
       if (!active.noInput) {
         const literal = echo || active.action.startsWith('org.koya.Askpass.') || active.user !== profile.UserName;
-        input = await credentialInput(win, root, { width, value, mode: literal ? 'password' : mode || credentialMode(profile, active.user),
+        input = await credentialInput(win, body, { width, value, mode: literal ? 'password' : mode || credentialMode(profile, active.user),
           profile: literal ? {} : profile, echo, placeholder: echo ? 'Enter response' : 'Enter password',
-          compact: landscape, rowHeight: landscape ? 32 : 48, onSubmit: () => enqueue(submit), onCancel: cancel });
+          enterLabel: 'Confirm', dock: { parent: root, size }, onSubmit: () => enqueue(submit), onCancel: cancel });
         await input.setEnabled(waiting && !sending); if (waiting) input.focus();
       }
-      statusLabel = await label(win, root, active.status || '', TYPE.caption, width, 28, ORANGE);
-      const actions = await UI.createElement(win, { layout: { type: 'row', gap: SPACE.s }, item: { size: { x: width, y: 48 } } });
-      await UI.attach(win, root, actions);
-      const actionWidth = active.mode === 'none' ? width : (width - SPACE.s) / 2;
-      if (active.mode !== 'none') await button(win, actions, 'Cancel', actionWidth, 48, cancel, { colour: CARD });
-      const submitButton = await button(win, actions, '', actionWidth, 48, () => enqueue(submit), { colour: ORANGE });
-      submitLabel = await text(win, submitButton, active.mode === 'confirm' ? 'Allow' : active.mode === 'none' ? 'Close' : 'Authenticate', TYPE.body, actionWidth, 48, INK);
+      statusLabel = await text(win, body, active.status || '', TYPE.caption, width, 28, ORANGE);
+      if (active.noInput) {
+        // Confirmation only: two clear choices instead of a keyboard.
+        const actions = await UI.createElement(win, { layout: { type: 'row', gap: SPACE.s }, item: { size: { x: width, y: 56 } } });
+        await UI.attach(win, body, actions);
+        const actionWidth = active.mode === 'none' ? width : (width - SPACE.s) / 2;
+        if (active.mode !== 'none') await button(win, actions, 'Deny', actionWidth, 56, cancel, { colour: CARD, size: TYPE.body });
+        await button(win, actions, active.mode === 'confirm' ? 'Allow' : 'Close', actionWidth, 56, () => enqueue(submit),
+          { colour: ORANGE, labelColour: INK, size: TYPE.body });
+      }
     } finally { await Compositor.setWindowRenderingEnabled(win, true); }
   };
   const begin = async (id, action, message, user) => {

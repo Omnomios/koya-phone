@@ -16,9 +16,10 @@ export default async () => {
       const state = await call('GetState');
       if (!state.SecureLocked || await Compositor.sessionLockState() !== 'locked') throw new Error('Lock was not confirmed');
       if ((await Compositor.getWindowInfo(win)).role !== 'lock') throw new Error('Lock uses the wrong Wayland role');
-      const field = await UI.getElementById(win, 'lock-credential');
-      const frame = await UI.getElementFrame(win, field);
-      if (frame.size.y < 48 || frame.min.y < 0) throw new Error('Credential field is not usable');
+      const target = await UI.getElementById(win, 'lock-swipe');
+      const frame = await UI.getElementFrame(win, target);
+      if (frame.size.y < 100 || frame.min.y < 0) throw new Error('Swipe surface is not usable');
+      if (await UI.getElementById(win, 'lock-credential') >= 0) throw new Error('Authentication input is exposed before swiping');
       if (!await Screenshot.capture(win, { id: 'lock', source: 'vulkan', mipmaps: false })) throw new Error('Capture failed');
       const png = await Image.encode(win, { src: '/ram/screenshot/lock', format: 'png' });
       Process.writeFile('/tmp/koya-lock-screen.png', png instanceof ArrayBuffer ? png : Uint8Array.from(png).buffer);

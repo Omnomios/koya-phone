@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
 import { credentialAnswer, credentialMode, validPin } from '../apps/credential-model.js';
 import { lockController } from '../apps/lock-controller.js';
+import { swipeGesture } from '../apps/swipe.js';
+for (const height of [540, 1140]) {
+  const gesture = swipeGesture(height), start = { x: 150, y: height - 80 };
+  assert.equal(gesture.up({ x: 150, y: 100 }), false, 'A release without a press revealed authentication');
+  for (const end of [start, { x: 150, y: start.y - 20 }, { x: 150, y: start.y + 50 }, { x: 350, y: start.y - 150 }]) {
+    gesture.down(start); assert.equal(gesture.up(end), false, 'Accidental input revealed authentication');
+  }
+  gesture.down(start); gesture.cancel();
+  assert.equal(gesture.up({ x: 150, y: start.y - 180 }), false, 'A cancelled swipe revealed authentication');
+  gesture.down(start);
+  assert.equal(gesture.up({ x: 160, y: start.y - 180 }), true, 'A deliberate upward swipe did not reveal authentication');
+}
 const profile = { UserName: 'phone', AuthenticationMode: 'pin', AuthenticationSalt: 'a'.repeat(64), PendingAuthenticationMode: 'pin', PendingAuthenticationSalt: 'b'.repeat(64) };
 assert.equal(credentialMode(profile, 'phone'), 'pin');
 assert.equal(credentialMode(profile, 'root'), 'password');

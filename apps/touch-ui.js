@@ -49,9 +49,10 @@ export async function button(win, parent, label, width, height, handler, options
       origin: { x: 0.5, y: 0.5 } },
     layout: { type: 'column', justifyContent: 'center', alignItems: 'center', gap: options.gap ?? 8 },
     item: { size: { x: width, y: height } }, contentAlign: 'fill', inheritAnimation: true,
-    onMouseDown: () => { haptic(); if (!waiting) motion?.play('press'); },
-    onMouseUp: () => !waiting && motion?.play('release'),
-    onMouseExit: () => !waiting && motion?.play('settle'),
+    // onPress/onRelease let callers add secondary feedback (a key preview).
+    onMouseDown: () => { haptic(); if (!waiting) motion?.play('press'); options.onPress?.(); },
+    onMouseUp: () => { if (!waiting) motion?.play('release'); options.onRelease?.(); },
+    onMouseExit: () => { if (!waiting) motion?.play('settle'); options.onRelease?.(); },
     onMouseClick: handler
   });
   await UI.attach(win, parent, id);

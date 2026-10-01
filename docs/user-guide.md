@@ -13,7 +13,7 @@
 | Open notifications and brightness controls | Tap the top bar or swipe down from it |
 | Switch the screen off or wake it | Press the power button briefly |
 | Open Power off, Restart and Lock | Hold the power button |
-| Unlock | Enter your password or PIN |
+| Unlock | Swipe up, then enter your password or PIN |
 | Adjust volume | Press or hold a volume button |
 
 The lock screen authenticates your Linux account through PAM. Choose password
@@ -27,8 +27,10 @@ button when an app does not open it automatically.
 
 ## Authentication
 
-The phone starts locked. Press the power button to wake it, then enter your
-Linux account password. In **Settings → Password & PIN**, choose a password
+The phone starts locked. Press the power button to wake it, swipe the clock
+screen up, then enter your Linux account password. Tap **Cancel** to return to
+the clock screen. Switching the screen off clears the input and restores the
+clock screen when you wake it. In **Settings → Password & PIN**, choose a password
 (at least 8 characters) or a PIN (6 to 12 digits), authenticate with your current
 credentials, and enter the new value twice.
 
