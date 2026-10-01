@@ -1,5 +1,8 @@
 import * as UI from 'Helix/UserInterface';
 import * as Log from 'Helix/Log';
+import * as Credentials from 'Module/credentials';
+import { credentialInput } from './credential-input.js';
+import { credentialMode, validPin } from './credential-model.js';
 import { connect, call } from './session.js';
 import { WALLPAPERS, wallpaperFor, wallpaperFrame } from './wallpapers.js';
 import { configureWallpaper, wallpaperSurface } from './wallpaper-surface.js';
@@ -18,7 +21,7 @@ const categories = {
     settings: [
       { key: 'AutoRotateEnabled', title: 'Auto-rotate', boolean: true },
       { key: 'IdleLockSeconds', title: 'Screen off after', hint: 'While using the phone', choices: [0, 30, 60, 120, 300, 600], format: seconds },
-      { key: 'IdleScreenSeconds', title: 'Swipe screen timeout', hint: 'While the swipe screen is visible', choices: [0, 15, 30, 60, 120], format: seconds },
+      { key: 'IdleScreenSeconds', title: 'Lock screen timeout', hint: 'While the lock screen is visible', choices: [0, 15, 30, 60, 120], format: seconds },
       { key: 'IdleSuspendSeconds', title: 'Suspend after', hint: 'After the display switches off', choices: [0, 60, 180, 300, 600, 1800], format: seconds },
       { key: 'BrightnessMinPercent', title: 'Minimum brightness', choices: [1, 5, 10, 15, 20, 30], format: percent }
     ] },
@@ -43,6 +46,7 @@ const ROW = 72, CHOICE = 60;
 export default async () => {
   let state = {}, ready = false, section = 'home', pageIndex = 0, choice, changed;
   const pending = new Set();
+  let setup, credentialField;
   const allowed = () => ready && state.Active && state.ScreenState === 'unlocked';
   const frame = await appFrame({ title: 'Settings', appId: 'org.koya.Settings',
     hint: () => !ready ? 'Connecting to the shell…' : !allowed() ? 'Unlock the phone to change settings' : '',
@@ -88,6 +92,8 @@ export default async () => {
     name = hero.valueLabel;
     await UI.setElementId(win, hero.target, 'settings-wallpaper');
     page.items.push(hero.target);
+    const authentication = await frame.navigate(page.el, 'Password & PIN', state.AuthenticationMode === 'pin' ? 'PIN' : 'Password', ROW + 4, () => ok() && go('authentication', 1));
+    await UI.setElementId(win, authentication.target, 'settings-authentication'); page.items.push(authentication.target);
     const summaries = {};
     for (const [key, category] of Object.entries(categories)) {
       const entry = await frame.navigate(page.el, category.title, category.summary(state), ROW + 4, () => ok() && go(key, 1));
@@ -97,6 +103,7 @@ export default async () => {
     }
     page.update = async () => {
       await UI.setTextString(win, name, wallpaperFor(state.Wallpaper).name);
+      await UI.setTextString(win, authentication.valueLabel, state.AuthenticationMode === 'pin' ? 'PIN' : 'Password');
       for (const [key, category] of Object.entries(categories)) await UI.setTextString(win, summaries[key], category.summary(state));
     };
     return page;
@@ -317,10 +324,68 @@ export default async () => {
     return page;
   };
 
+  const authenticationPage = async () => {
+    const page = await frame.newPage(), ok = live(page);
+    credentialField?.dispose(); credentialField = undefined;
+    page.hint = 'Both methods use your Linux account password';
+    if (!setup) {
+      await label(win, page.el, 'Choose how you enter your credentials. Setup also changes your Linux account password.', TYPE.body, metric.width, 84, MUTED);
+      for (const mode of ['password', 'pin']) {
+        const target = await button(win, page.el, mode === 'pin' ? 'Use a PIN' : 'Use a password', metric.width, 64, () => {
+          if (!ok()) return;
+          setup = { mode, salt: mode === 'pin' ? Credentials.newSalt() : '', step: 'current', current: '', next: '' };
+          go('authentication', 1);
+        }, { colour: CARD }); page.items.push(target);
+      }
+      return page;
+    }
+    const step = setup.step;
+    page.hint = step === 'current' ? 'Authenticate with your current password or PIN'
+      : step === 'next' ? setup.mode === 'pin' ? 'Choose a PIN of 6 to 12 digits' : 'Choose a password of at least 8 characters'
+      : 'Enter it again to confirm';
+    const heading = step === 'current' ? 'Current credentials' : (step === 'confirm' ? 'Confirm ' : 'New ') + (setup.mode === 'pin' ? 'PIN' : 'password');
+    await text(win, page.el, heading, TYPE.heading, metric.width, 42);
+    const profile = step === 'current' ? state : { UserName: state.UserName, AuthenticationMode: setup.mode, AuthenticationSalt: setup.salt };
+    let working = false;
+    const advance = async () => {
+      if (!ok() || working || !credentialField) return;
+      working = true;
+      try {
+        if (step === 'current') {
+          setup.current = await credentialField.answer();
+          if (!setup.current) throw new Error('Enter your current credentials');
+          setup.step = 'next';
+        } else if (step === 'next') {
+          const value = credentialField.value;
+          if (setup.mode === 'pin' ? !validPin(value) : Array.from(value).length < 8) throw new Error('Check the length');
+          setup.next = value; setup.step = 'confirm';
+        } else {
+          if (credentialField.value !== setup.next) throw new Error('The entries do not match');
+          const next = await credentialField.answer();
+          credentialField.clear();
+          await credentialField.setEnabled(false);
+          await call('ConfigureAuthentication', 'ssss', setup.mode, setup.salt, setup.current, next);
+          setup.current = setup.next = ''; setup = undefined;
+          credentialField.dispose(); credentialField = undefined;
+          flash('Authentication updated', ORANGE); go('home', -1); return;
+        }
+        credentialField.dispose(); credentialField = undefined;
+        go('authentication', 1);
+      } catch (_) { flash(step === 'confirm' ? 'Setup failed. Check the entries and try again.' : 'Check your credentials and try again.', ORANGE); }
+      finally { working = false; if (credentialField && ok()) await credentialField.setEnabled(true); }
+    };
+    credentialField = await credentialInput(win, page.el, { width: metric.width, profile,
+      mode: step === 'current' ? credentialMode(state, state.UserName) : setup.mode, allowMode: step === 'current',
+      compact: frame.size.x > frame.size.y, rowHeight: frame.size.x > frame.size.y ? 32 : 48, onSubmit: advance });
+    const next = await button(win, page.el, step === 'confirm' ? 'Save' : 'Continue', metric.width, 48, advance, { colour: ORANGE });
+    page.items.push(next);return page;
+  };
+
   // ---- Navigation --------------------------------------------------------
-  const titleFor = target => target === 'home' ? 'Settings' : target === 'wallpaper' ? 'Wallpaper' : target === 'choice' ? choice.title : categories[target].title;
-  const build = target => target === 'home' ? homePage() : target === 'wallpaper' ? wallpaperPage() : target === 'choice' ? choicePage() : categoryPage(target);
+  const titleFor = target => target === 'home' ? 'Settings' : target === 'wallpaper' ? 'Wallpaper' : target === 'choice' ? choice.title : target === 'authentication' ? 'Password & PIN' : categories[target].title;
+  const build = target => target === 'home' ? homePage() : target === 'wallpaper' ? wallpaperPage() : target === 'choice' ? choicePage() : target === 'authentication' ? authenticationPage() : categoryPage(target);
   const go = (target, direction, targetPage = 0) => {
+    if (target !== 'authentication') { credentialField?.dispose(); credentialField = undefined; if (setup) setup.current = setup.next = ''; setup = undefined; }
     section = target; pageIndex = targetPage;
     return frame.go(() => build(target), { title: titleFor(target), direction, back: target !== 'home', dim: !allowed() });
   };
@@ -332,6 +397,7 @@ export default async () => {
   let wasAllowed = false;
   connect('settings', next => {
     state = next;
+    if (!next.Active || next.ScreenState !== 'unlocked') { credentialField?.dispose(); credentialField = undefined; if (setup) setup.current = setup.next = ''; setup = undefined; }
     configureWallpaper(state);
     const first = !ready;
     ready = true;
@@ -340,7 +406,11 @@ export default async () => {
       await frame.current?.update();
       if (allowed() !== wasAllowed) frame.setDim(!allowed());
       await frame.refreshHint();
-    }).then(() => { wasAllowed = allowed(); });
+    }).then(() => {
+      const resumeSetup = allowed() && !wasAllowed && section === 'authentication';
+      wasAllowed = allowed();
+      if (resumeSetup) return go('authentication', 0);
+    });
   });
   globalThis.koyaSettings = { window: win, settled: () => frame.settled.then(() => new Promise(resolve => setTimeout(resolve, 450))),
     open: value => go(value, 1), save,

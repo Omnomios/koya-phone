@@ -10,8 +10,8 @@ volume controls, brightness adjustment, vibration feedback, automatic screen
 rotation and a power menu.
 It does not include a calls or SMS interface.
 
-**The swipe screen does not require a password and does not securely lock your
-phone.**
+The lock screen authenticates your Linux account through PAM. Choose password
+or PIN entry in **Settings → Password & PIN**.
 
 ## Screenshots
 
@@ -71,10 +71,7 @@ administrator prompt; the installer continues after the shell closes.
 
 Tap the top bar or swipe down for notifications, brightness and Wi-Fi settings.
 Press the power button briefly to switch the screen off or wake it; hold it to
-open the power menu. Swipe up to dismiss the swipe screen.
+open the power menu. Enter your password or PIN to unlock.
 
 The [user guide](docs/user-guide.md) covers Wi-Fi, notifications, screen timeouts,
 volume, brightness and vibration settings.
-
-Licensed under the [MIT license](COPYING). Koya and other dependencies have their
-own licenses.

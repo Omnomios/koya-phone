@@ -10,7 +10,7 @@ audio and internet access.
 | Distribution | postmarketOS v25.12 or newer, with apk-tools 3 or newer |
 | Architecture | aarch64 or x86_64 |
 | Compositor packages | Hyprland 0.51.x available in the configured repositories |
-| Koya packages | Build 891 or newer, with live resizing and rotation-aware layer surfaces |
+| Koya packages | Current release with session-lock support and matching DBus, Hyprland, process and PAM plugins |
 | Device | OnePlus 6 (`enchilada`); other devices use a generic profile and need working hardware support |
 | Installer access | `curl` and permission to use `sudo` or `doas`, or a root shell |
 

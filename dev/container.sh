@@ -81,8 +81,9 @@ if (( build_image )); then
     # Stage a small context so neither engine uploads build artifacts or .git.
     context=$(mktemp -d /tmp/koya-container-build.XXXXXX)
     trap 'rm -rf "$context"' EXIT
-    mkdir -p "$context/dev"
+    mkdir -p "$context/dev" "$context/install"
     cp "$root/dev/install-koya-release.sh" "$context/dev/"
+    cp "$root/install/koya-lock.pam" "$context/install/"
     cp "$root/dev/Containerfile" "$context/Containerfile"
     build_args=(build --tag "$image" --file "$context/Containerfile"
         --build-arg "KOYA_VERSION=$koya_version" --build-arg "HYPRLAND_VERSION=$hyprland_version"

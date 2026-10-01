@@ -5,6 +5,7 @@ instance=$XDG_RUNTIME_DIR/hypr/test
 mkdir -p "$instance"
 printf '1\n' >"$XDG_RUNTIME_DIR/dpms"
 printf '1\n' >"$XDG_RUNTIME_DIR/workspace"
+printf '0\n' >"$XDG_RUNTIME_DIR/transform"
 printf '[]\n' >"$XDG_RUNTIME_DIR/clients"
 : >"$XDG_RUNTIME_DIR/commands"
 : >"$XDG_RUNTIME_DIR/events"

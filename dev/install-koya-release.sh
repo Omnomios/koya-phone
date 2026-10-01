@@ -33,18 +33,17 @@ configure_repository() {
 install_release() {
     local package
     local -a packages=()
-    [[ "$koya_version" == latest || ( "$koya_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$ && ${koya_version##*-r} -ge 891 ) ]] || {
-        fail 'Use latest or a Koya APK release with build 891 or newer'; return 1;
+    [[ "$koya_version" == latest || ( "$koya_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$ && ${koya_version##*-r} -ge 892 ) ]] || {
+        fail 'Use latest or a Koya APK release with build 892 or newer'; return 1;
     }
     configure_repository
-    for package in koya helix-plugin-dbus helix-plugin-process; do
+    for package in koya helix-plugin-dbus helix-plugin-hypr helix-plugin-process helix-plugin-pam; do
         if [[ "$koya_version" == latest ]]; then
-            packages+=("$package@koya")
+            packages+=("$package@koya>=0.5.3-r892")
         else
             packages+=("$package@koya=$koya_version")
         fi
     done
-    if [[ "$koya_version" == latest ]]; then packages[0]='koya@koya>=0.5.3-r891'; fi
     # APK verifies the repository index and packages using the authenticated key.
     apk add --no-cache "${packages[@]}"
 }
@@ -63,14 +62,14 @@ main() {
     work=$(mktemp -d /tmp/koya-release.XXXXXX)
     trap 'gpgconf --homedir "$work/gnupg" --kill gpg-agent 2>/dev/null || :; gpgconf --homedir "$work/key-bundle" --kill gpg-agent 2>/dev/null || :; rm -rf "$work"' EXIT
     install_release
-    for path in /usr/bin/koya /usr/lib/libhx-dbus.so /usr/lib/libhx-process.so \
+    for path in /usr/bin/koya /usr/lib/libhx-dbus.so /usr/lib/libhx-hypr.so /usr/lib/libhx-process.so /usr/lib/libhx-pam.so \
         /usr/share/koya/assets/fonts/SourceSans3-Regular.ttf; do
         [[ -r "$path" ]] || { fail "Release installation is missing $path"; return 1; }
     done
     mkdir -p /usr/local/share
     {
         printf 'repository=%s\narch=%s\nkey=%s\n' "$KOYA_REPOSITORY" "$arch" "$KOYA_KEY"
-        apk info -v -e koya helix-plugin-dbus helix-plugin-process
+        apk info -v -e koya helix-plugin-dbus helix-plugin-hypr helix-plugin-process helix-plugin-pam
     } >/usr/local/share/koya-release.txt
     /usr/bin/koya --version
 }

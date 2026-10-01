@@ -7,7 +7,7 @@ trap 'rm -rf "$test_dir"' 0
 export TEST_INSTALL_ROOT="$shell_root" TEST_INSTALL_DIR="$test_dir"
 mkdir -p "$test_dir/fixtures/apk/keys" "$test_dir/fixtures/koya"
 touch "$test_dir/fixtures/koya/koya" "$test_dir/fixtures/koya/dbus.so" \
-    "$test_dir/fixtures/koya/process.so" "$test_dir/fixtures/koya/font.ttf"
+    "$test_dir/fixtures/koya/pam.so" "$test_dir/fixtures/koya/hypr.so" "$test_dir/fixtures/koya/process.so" "$test_dir/fixtures/koya/font.ttf"
 sed '$d' "$shell_root/install.sh" |
     sed -e "s|/etc/koya-shell/hyprland.conf|$test_dir/fixtures/hyprland.conf|g" \
         -e "s|/etc/conf.d/tinydm|$test_dir/fixtures/tinydm|g" \
@@ -16,6 +16,8 @@ sed '$d' "$shell_root/install.sh" |
         -e "s|/etc/apk/|$test_dir/fixtures/apk/|g" \
         -e "s|/usr/bin/koya|$test_dir/fixtures/koya/koya|g" \
         -e "s|/usr/lib/libhx-dbus.so|$test_dir/fixtures/koya/dbus.so|g" \
+        -e "s|/usr/lib/libhx-hypr.so|$test_dir/fixtures/koya/hypr.so|g" \
+        -e "s|/usr/lib/libhx-pam.so|$test_dir/fixtures/koya/pam.so|g" \
         -e "s|/usr/lib/libhx-process.so|$test_dir/fixtures/koya/process.so|g" \
         -e "s|/usr/share/koya/assets/fonts/SourceSans3-Regular.ttf|$test_dir/fixtures/koya/font.ttf|g" \
         >"$test_dir/library.sh"
@@ -185,8 +187,8 @@ source_dir=$TEST_INSTALL_ROOT
 arch=aarch64; download_base=https://example.invalid/downloads
 koya_version=latest
 case "$mode" in
-    pinned) koya_version=9.8.7-r9999 ;;
-    outdated) koya_version=0.5.3-r890 ;;
+    pinned) koya_version=0.5.3-r892 ;;
+    outdated) koya_version=0.5.3-r891 ;;
     invalid) koya_version=not-a-version ;;
 esac
 printf 'hyprland~0.51\ncurl\ngnupg\n' >"$work/packages"
@@ -236,8 +238,8 @@ apk() {
             grep -Fxq "v3 @koya $KOYA_REPOSITORY" "$TEST_INSTALL_DIR/fixtures/apk/repositories"
             [ "$mode" != unavailable ] ;;
         ' info -v -e hyprland ') printf 'hyprland-0.51.1-r1\n' ;;
-        ' info -v -e koya helix-plugin-dbus helix-plugin-process ')
-            printf 'koya-9.8.7-r9999\nhelix-plugin-dbus-9.8.7-r9999\nhelix-plugin-process-9.8.7-r9999\n' ;;
+        ' info -v -e koya helix-plugin-dbus helix-plugin-hypr helix-plugin-process helix-plugin-pam ')
+            printf 'koya-9.8.7-r9999\nhelix-plugin-dbus-9.8.7-r9999\nhelix-plugin-hypr-9.8.7-r9999\nhelix-plugin-process-9.8.7-r9999\nhelix-plugin-pam-9.8.7-r9999\n' ;;
         *) : ;;
     esac
 }
@@ -257,9 +259,9 @@ for mode in latest pinned configured wrong-key bad-signature outdated invalid up
         grep -q -- '--verify .*koya-apk.rsa.pub.sig .*koya-apk.rsa.pub' "$case_work/gpg.calls"
         [ "$(grep -cx update "$case_work/apk.calls")" = 2 ]
         if [ "$mode" = pinned ]; then
-            packages='koya@koya=9.8.7-r9999 helix-plugin-dbus@koya=9.8.7-r9999 helix-plugin-process@koya=9.8.7-r9999'
+            packages='koya@koya=0.5.3-r892 helix-plugin-dbus@koya=0.5.3-r892 helix-plugin-hypr@koya=0.5.3-r892 helix-plugin-process@koya=0.5.3-r892 helix-plugin-pam@koya=0.5.3-r892'
         else
-            packages='koya@koya>=0.5.3-r891 helix-plugin-dbus@koya helix-plugin-process@koya'
+            packages='koya@koya>=0.5.3-r892 helix-plugin-dbus@koya>=0.5.3-r892 helix-plugin-hypr@koya>=0.5.3-r892 helix-plugin-process@koya>=0.5.3-r892 helix-plugin-pam@koya>=0.5.3-r892'
         fi
         grep -Fxq "add --simulate --upgrade hyprland~0.51 curl gnupg $packages" "$case_work/apk.calls"
         grep -Fxq "add --upgrade hyprland~0.51 curl gnupg $packages" "$case_work/apk.calls"
@@ -268,7 +270,7 @@ for mode in latest pinned configured wrong-key bad-signature outdated invalid up
         case "$mode" in
             wrong-key) grep -q 'fingerprint does not match' "$output" ;;
             bad-signature) grep -q 'Bad signature: Koya Alpine repository key' "$output" ;;
-            outdated) grep -q 'build 891 or newer' "$output" ;;
+            outdated) grep -q 'build 892 or newer' "$output" ;;
             invalid) grep -q 'APK version available' "$output" ;;
             update-failure|unavailable) ;;
             *) cat "$output" >&2; exit 1 ;;
@@ -296,9 +298,13 @@ as_login() {
         case "$2" in
             setup) mkdir -p "$3" ;;
             compile)
-                for binary in koya-session koya-hyprland-display koya-launch-app koya-askpass koya-update-service; do
+                for binary in koya-session koya-hyprland-display koya-launch-app koya-askpass koya-update-service koya-credential-update; do
                     printf '#!/bin/sh\nexit 0\n' >"$release/build/$binary"
                     chmod +x "$release/build/$binary"
+                done
+                mkdir -p "$release/build/native/modules"
+                for module in desktop linux-device polkit-agent credentials; do
+                    : >"$release/build/native/modules/libhx-$module.so"
                 done ;;
             *) exit 1 ;;
         esac
@@ -318,6 +324,7 @@ grep -Fxq "repository=$KOYA_REPOSITORY" "$release/install-record.txt"
 grep -Fxq "source_commit=$source_commit" "$release/install-record.txt"
 grep -Fxq 'koya-9.8.7-r9999' "$release/install-record.txt"
 grep -Fxq 'helix-plugin-dbus-9.8.7-r9999' "$release/install-record.txt"
+grep -Fxq 'helix-plugin-hypr-9.8.7-r9999' "$release/install-record.txt"
 grep -Fxq 'helix-plugin-process-9.8.7-r9999' "$release/install-record.txt"
 [ ! -e "$release/dev" ]
 [ ! -e "$release/tests" ]

@@ -106,6 +106,9 @@ session() {
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
+    export KOYA_PHONE_MODULE_DIR=$KOYA_DEV_BUILD/modules
+    export KOYA_PLUGIN_DIR=$KOYA_DEV_PLUGINS
+    export LD_LIBRARY_PATH=$KOYA_DEV_PLUGINS:${LD_LIBRARY_PATH:-}
     export KOYA_DEV_RUN=$run KOYA_DEV_SOURCE=$run/source KOYA_DEV_CHECKOUT=$root
     export DBUS_SYSTEM_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS
     export XDG_RUNTIME_DIR=$run XDG_STATE_HOME=$logs XDG_CACHE_HOME=$run/cache
@@ -149,13 +152,13 @@ JS
 set -euo pipefail
 entry="apps/$1.js"
 [[ "$1" != top-bar ]] || entry=dev-top-bar.js
-exec "$KOYA_DEV_KOYA" -n "$KOYA_DEV_PLUGINS" -m "$KOYA_DEV_ASSETS" -m "$KOYA_DEV_SOURCE" \
+exec "$KOYA_DEV_KOYA" -n "$KOYA_PHONE_MODULE_DIR" -m "$KOYA_DEV_ASSETS" -m "$KOYA_DEV_SOURCE" \
     -m "$KOYA_DEV_CHECKOUT" -m "$XDG_CACHE_HOME/koya/icons" -i "$entry"
 WRAPPER
     cat >"$run/wifi.sh" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
-exec "$KOYA_DEV_KOYA" -n "$KOYA_DEV_PLUGINS" -m "$KOYA_DEV_ASSETS" -m "$KOYA_DEV_SOURCE" \
+exec "$KOYA_DEV_KOYA" -n "$KOYA_PHONE_MODULE_DIR" -m "$KOYA_DEV_ASSETS" -m "$KOYA_DEV_SOURCE" \
     -m "$KOYA_DEV_CHECKOUT" -i apps/wifi.js
 WRAPPER
     sed 's|apps/wifi.js|apps/settings.js|' "$run/wifi.sh" >"$run/settings.sh"
@@ -290,10 +293,10 @@ fi
 [[ -n "$assets" && -f "$assets/fonts/SourceSans3-Regular.ttf" ]] || fail 'Engine assets not found; set --assets DIR.'
 if [[ -z "$plugins" ]]; then
     for candidate in "$binary_dir/../lib" "$binary_dir/../lib64" /usr/lib /usr/lib64; do
-        if [[ -f "$candidate/libhx-dbus.so" && -f "$candidate/libhx-process.so" ]]; then plugins=$candidate; break; fi
+        if [[ -f "$candidate/libhx-dbus.so" && -f "$candidate/libhx-hypr.so" && -f "$candidate/libhx-process.so" && -f "$candidate/libhx-pam.so" ]]; then plugins=$candidate; break; fi
     done
 fi
-[[ -n "$plugins" && -f "$plugins/libhx-dbus.so" && -f "$plugins/libhx-process.so" ]] || fail 'D-Bus/process plugins not found; set --plugins DIR.'
+[[ -n "$plugins" && -f "$plugins/libhx-dbus.so" && -f "$plugins/libhx-hypr.so" && -f "$plugins/libhx-process.so" && -f "$plugins/libhx-pam.so" ]] || fail 'DBus/Hyprland/process/PAM plugins not found; set --plugins DIR.'
 assets=$(realpath -- "$assets") plugins=$(realpath -- "$plugins") build=$(realpath -m -- "$build")
 if [[ -n "$keyboard" ]]; then keyboard=$(resolve_executable "$keyboard"); else keyboard=$(command -v squeekboard || :); fi
 [[ -n "$keyboard" ]] || printf 'Squeekboard not found: on-screen keyboard disabled; desktop keyboard still works.\n'

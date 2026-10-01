@@ -116,7 +116,7 @@ grep -q 'Hyprland rejected' "$test_dir/launcher.log"
 export KOYA_DEV_FIXTURE=$build/koya-local-dev-fixture KOYA_DEV_AUDIT=$test_dir/audit
 layout=$test_dir/release
 mkdir -p "$layout/bin" "$layout/lib" "$layout/share/koya/assets/fonts"
-touch "$layout/lib/libhx-dbus.so" "$layout/lib/libhx-process.so"
+touch "$layout/lib/libhx-dbus.so" "$layout/lib/libhx-hypr.so" "$layout/lib/libhx-process.so" "$layout/lib/libhx-pam.so"
 touch "$layout/share/koya/assets/fonts/SourceSans3-Regular.ttf"
 cat >"$layout/bin/koya" <<'STUB'
 #!/usr/bin/env bash

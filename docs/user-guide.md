@@ -13,11 +13,11 @@
 | Open notifications and brightness controls | Tap the top bar or swipe down from it |
 | Switch the screen off or wake it | Press the power button briefly |
 | Open Power off, Restart and Lock | Hold the power button |
-| Dismiss the swipe screen | Swipe up |
+| Unlock | Enter your password or PIN |
 | Adjust volume | Press or hold a volume button |
 
-**The swipe screen does not require a password and does not securely lock your
-phone.**
+The lock screen authenticates your Linux account through PAM. Choose password
+or PIN entry in **Settings → Password & PIN**.
 
 Each app opens on its own desktop. Selecting an app that is already open returns
 to its window. Use **Desktops** to switch between apps or close their windows.
@@ -27,11 +27,27 @@ button when an app does not open it automatically.
 
 ## Authentication
 
+The phone starts locked. Press the power button to wake it, then enter your
+Linux account password. In **Settings → Password & PIN**, choose a password
+(at least 8 characters) or a PIN (6 to 12 digits), authenticate with your current
+credentials, and enter the new value twice.
+
+PIN setup derives a longer password and makes it your Linux account password;
+it does not create a separate phone credential. Koya derives it again when you
+enter the PIN to unlock or authorize a local account request. Terminal password
+prompts and remote SSH clients do not perform this conversion. Use SSH keys for
+remote access, or select password mode if you need to type the account password
+outside Koya. Changing back to password mode sets a new account password.
+
+If setup is interrupted, the input offers both methods so you can try the old
+credentials or the new ones. Finish setup in Settings once unlocked.
+
 Apps that request administrator access through polkit open Koya's password dialog in
 the graphical session, including Power off and Restart when authorization is
 required. SSH from a terminal or app launched by Koya uses the same dialog
-when it needs a password or key passphrase. SSH key-use confirmations show
-**Allow** and **Cancel** instead of a password field. For a graphical `sudo`
+when it needs a password or key passphrase. These remote credentials use literal
+password entry; the phone PIN applies only to your local Linux account.
+SSH key-use confirmations show **Allow** and **Cancel** instead of a password field. For a graphical `sudo`
 prompt on systems with real sudo, use `sudo -A`. The default
 postmarketOS `doas-sudo-shim` does not support that option; Koya's updater uses
 polkit instead. Ordinary terminal privilege prompts still read from the
@@ -41,7 +57,7 @@ not open a prompt on the phone.
 ## Updating Koya
 
 Open **Update Koya** from the app launcher, save your work, then tap **Install
-update**. Enter your administrator password in the Koya dialog. The app
+update**. Enter your administrator password or configured PIN in the Koya dialog. The app
 shows the installed and repository commit hashes and how many commits the
 installed shell is behind the configured ref. Older installations without a
 recorded commit show an unknown installed revision until the next install.
@@ -79,7 +95,7 @@ screen. Notification history is cleared when the shell restarts.
 ## Settings
 
 Open **Settings** from the app launcher. Choose **Wallpaper** for the four bundled
-wallpapers; tap a preview to apply it to the home screen, swipe screen and shell
+wallpapers; tap a preview to apply it to the home screen, lock screen and shell
 panel backgrounds. The selected wallpaper is marked **Selected**.
 
 **Screen & sleep** controls auto-rotation, screen timeouts and minimum brightness. **Volume &
@@ -103,7 +119,7 @@ sudo rc-service tinydm restart
 
 Auto-rotate is on by default. Turn **Auto-rotate** off to keep the current screen
 orientation. With it on, the display follows the phone's accelerometer after it
-holds the same orientation for one second, including on the swipe screen.
+holds the same orientation for one second, including on the lock screen.
 A brief fade covers the shell while it rearranges for the new screen size.
 A device without an available sensor keeps its orientation.
 The sensor is released while the display is off, the session is inactive, or
@@ -114,8 +130,8 @@ corresponding timeout.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `lock-seconds` | `120` | Show the swipe screen and switch the display off after inactivity |
-| `lock-screen-seconds` | `30` | Switch the display off while the swipe screen is visible |
+| `lock-seconds` | `120` | Show the lock screen and switch the display off after inactivity |
+| `lock-screen-seconds` | `30` | Switch the display off while the lock screen is visible |
 | `suspend-seconds` | `180` | Suspend after the display has switched off |
 
 Automatic suspend depends on the phone's sleep support and session permissions.
@@ -135,7 +151,7 @@ These settings are in the `[volume]` section.
 | `side` | `left` | Indicator side: `left` or `right` |
 | `margin` | `16` | Indicator distance from the edge |
 | `position-percent` | `50` | Indicator position from top (`0`) to bottom (`100`) |
-| `while-locked` | `true` | Allow volume buttons while the swipe screen is visible or the display is off |
+| `while-locked` | `true` | Allow volume buttons while the lock screen is visible or the display is off |
 | `sink` | empty | Follow the default audio output; set a PulseAudio output name to choose one |
 
 Changing volume while the display is off does not wake it. Volume up also unmutes

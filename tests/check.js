@@ -30,9 +30,14 @@ export const call = (method, signature = '', ...args) => Bus.callComplex(
   'org.koya.Shell1', '/org/koya/Shell1', 'org.koya.Shell1', method, signature, ...args
 ).catch(error => { throw new Error(method + ': ' + error); });
 export const state = () => call('GetState');
-export const waitState = (predicate, message) => wait(async () => {
-  const current = await state(); return (await predicate(current)) && current;
-}, message);
+export const waitState = async (predicate, message) => {
+  let lastState;
+  try {
+    return await wait(async () => {
+      lastState = await state(); return (await predicate(lastState)) && lastState;
+    }, message);
+  } catch (error) { throw new Error(String(error) + '\nLast shell state: ' + JSON.stringify(lastState)); }
+};
 export const testCall = (method, signature = '', ...args) => Bus.callComplex(
   'org.koya.Shell1', '/org/koya/Shell1', 'org.koya.Shell1.Test', method, signature, ...args);
 export const key = (code, value) => testCall('Button', 'uu', code, value);

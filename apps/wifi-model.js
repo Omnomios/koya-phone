@@ -1,7 +1,7 @@
 // NetworkManager owns profiles and connectivity; Koya owns selection and UI state.
 // The installed D-Bus module decodes some `y` values with garbage upper bits.
 export const ssidBytes = value => Array.from(value || [], byte => Number(byte) & 255);
-function ssidName(bytes) {
+export function ssidName(bytes) {
   // Helix does not currently expose TextDecoder. Preserve the raw SSID bytes
   // for activation, even if the advertised name is not valid UTF-8.
   try { return decodeURIComponent(bytes.map(byte => '%' + byte.toString(16).padStart(2, '0')).join('')).replace(/[\x00-\x1f\x7f]/g, '�'); }

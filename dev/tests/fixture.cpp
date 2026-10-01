@@ -20,12 +20,25 @@ static int socket_at(const std::string &path) {
 }
 static void action(GDBusConnection *bus, const char*, const char*, const char*, const char*, GVariant *args, GDBusMethodInvocation *invocation, gpointer) {
     const char *member; g_variant_get(args, "(&s)", &member);
-    g_dbus_connection_call(bus, "org.koya.Shell1", "/org/koya/Shell1", "org.koya.Shell1", member, nullptr,
+    GVariant *arguments = nullptr;
+    if (!strcmp(member, "Unlock")) {
+        GError *error = nullptr;
+        GVariant *reply = g_dbus_connection_call_sync(bus, "org.koya.Shell1", "/org/koya/Shell1", "org.koya.Shell1", "GetState",
+            nullptr, G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 3000, nullptr, &error);
+        if (!reply) { g_dbus_method_invocation_return_gerror(invocation, error); g_error_free(error); return; }
+        GVariant *state = g_variant_get_child_value(reply, 0); guint generation = 0;
+        g_variant_lookup(state, "LockGeneration", "u", &generation); g_variant_unref(state); g_variant_unref(reply);
+        reply = g_dbus_connection_call_sync(bus, "org.koya.Shell1", "/org/koya/Shell1", "org.koya.Shell1", "BeginUnlock",
+            g_variant_new("(u)", generation), nullptr, G_DBUS_CALL_FLAGS_NONE, 3000, nullptr, &error);
+        if (!reply) { g_dbus_method_invocation_return_gerror(invocation, error); g_error_free(error); return; }
+        g_variant_unref(reply); arguments = g_variant_new("(u)", generation);
+    }
+    g_dbus_connection_call(bus, "org.koya.Shell1", "/org/koya/Shell1", "org.koya.Shell1", member, arguments,
         nullptr, G_DBUS_CALL_FLAGS_NONE, 3000, nullptr, [](GObject *object, GAsyncResult *result, gpointer data) {
             auto *invocation = static_cast<GDBusMethodInvocation *>(data);
             GError *error = nullptr;
             GVariant *reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(object), result, &error);
-            if (reply) { g_dbus_method_invocation_return_value(invocation, reply); g_variant_unref(reply); }
+            if (reply) { g_dbus_method_invocation_return_value(invocation, nullptr); g_variant_unref(reply); }
             else { g_dbus_method_invocation_return_gerror(invocation, error); g_error_free(error); }
             g_object_unref(invocation);
         }, g_object_ref(invocation));
@@ -90,6 +103,28 @@ int main(int argc, char **argv) {
         GError *error = nullptr;
         GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
         if (!bus) return 1;
+        if (component == "platform") {
+            auto *node = g_dbus_node_info_new_for_xml(R"(<node><interface name="org.koya.Platform1">
+<method name="SetActive"><arg type="b" direction="in"/></method><method name="AuthenticationStart"/><method name="AuthenticationStop"/>
+<method name="HideKeyboard"/><method name="RefreshDevices"/>
+<method name="GetApplications"><arg type="aa{sv}" direction="out"/></method>
+</interface></node>)", nullptr);
+            static const GDBusInterfaceVTable table = {[](GDBusConnection *, const char *, const char *, const char *, const char *member, GVariant *, GDBusMethodInvocation *invocation, gpointer) {
+                if (!strcmp(member, "GetApplications")) {
+                    GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE("aa{sv}"));
+                    g_dbus_method_invocation_return_value(invocation, g_variant_new("(@aa{sv})", g_variant_builder_end(&b)));
+                } else g_dbus_method_invocation_return_value(invocation, nullptr);
+            }, nullptr, nullptr, {nullptr}};
+            g_dbus_connection_register_object(bus, "/org/koya/Platform1", node->interfaces[0], &table, nullptr, nullptr, nullptr);
+            GVariant *reply = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName",
+                g_variant_new("(su)", "org.koya.Platform1", 4u), nullptr, G_DBUS_CALL_FLAGS_NONE, 3000, nullptr, nullptr);
+            if (!reply) return 1; g_variant_unref(reply);
+            GVariantBuilder values; g_variant_builder_init(&values, G_VARIANT_TYPE_VARDICT);
+            g_variant_builder_add(&values, "{sv}", "DesktopAvailable", g_variant_new_boolean(TRUE));
+            reply = g_dbus_connection_call_sync(bus, "org.koya.Shell1", "/org/koya/Shell1", "org.koya.Shell1", "PlatformState",
+                g_variant_new("(@a{sv})", g_variant_builder_end(&values)), nullptr, G_DBUS_CALL_FLAGS_NONE, 3000, nullptr, nullptr);
+            if (!reply) return 1; g_variant_unref(reply);
+        }
         GDBusNodeInfo *node = g_dbus_node_info_new_for_xml("<node><interface name=\"org.koya.Test.Component\"><method name=\"Action\"><arg type=\"s\" direction=\"in\"/></method></interface></node>", nullptr);
         static const GDBusInterfaceVTable table = {action, nullptr, nullptr, {nullptr}};
         g_dbus_connection_register_object(bus, "/org/koya/Test/Component", node->interfaces[0], &table, nullptr, nullptr, nullptr);

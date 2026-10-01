@@ -1,8 +1,6 @@
-// SPDX-License-Identifier: MIT
 #include <gio/gio.h>
 #include <glib-unix.h>
-#include <libevdev/libevdev.h>
-#include <libudev.h>
+#include <linux/input-event-codes.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -19,13 +17,9 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "desktop.hpp"
-#include "status.hpp"
-#include "keyboard.hpp"
-#include "notification-transport.hpp"
-#include "backlight.hpp"
 #include "settings.hpp"
-#include "authentication.hpp"
+#include "credential-settings.hpp"
+#include "platform.hpp"
 
 static constexpr const char *BUS = "org.koya.Shell1", *PATH = "/org/koya/Shell1";
 static constexpr const char *LOGIN = "org.freedesktop.login1", *LOGIN_PATH = "/org/freedesktop/login1";
@@ -37,17 +31,16 @@ static const char XML[] = R"XML(<node><interface name="org.koya.Shell1">
  <method name="ShowPowerMenu"/><method name="DismissPowerMenu"/>
  <method name="PowerOff"/><method name="Reboot"/>
  <method name="Suspend"/>
- <method name="Lock"/><method name="Unlock"/>
+ <method name="Lock"/><method name="BeginUnlock"><arg type="u" direction="in"/></method>
+ <method name="CancelUnlock"><arg type="u" direction="in"/></method>
+ <method name="Unlock"><arg type="u" direction="in"/><arg type="b" direction="out"/></method>
+ <method name="ConfigureAuthentication"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="in"/></method>
  <method name="ShowDesktopView"><arg type="s" direction="in"/></method>
  <method name="DismissDesktopView"/>
  <method name="ToggleKeyboard"/>
  <method name="GetBrightness"><arg type="a{sv}" direction="out"/></method>
  <method name="SetBrightness"><arg type="u" direction="in"/><arg type="a{sv}" direction="out"/></method>
  <signal name="BrightnessChanged"/>
- <method name="RegisterNotifications"/>
- <method name="ReplyNotification"><arg type="u" direction="in"/><arg type="a{sv}" direction="in"/></method>
- <method name="EmitNotification"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="u" direction="in"/><arg type="s" direction="in"/><arg type="u" direction="in"/></method>
- <signal name="NotificationRequest"><arg type="s"/></signal>
  <method name="Askpass"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
  <method name="AuthenticationRespond"><arg type="u" direction="in"/><arg type="s" direction="in"/></method>
  <method name="AuthenticationCancel"><arg type="u" direction="in"/></method>
@@ -64,6 +57,9 @@ static const char XML[] = R"XML(<node><interface name="org.koya.Shell1">
  <method name="CloseWindow"><arg type="s" direction="in"/></method>
  <signal name="DesktopChanged"/>
  <signal name="ApplicationsChanged"/>
+ <method name="PlatformState"><arg type="a{sv}" direction="in"/></method>
+ <method name="PlatformButton"><arg type="u" direction="in"/><arg type="u" direction="in"/></method>
+ <method name="PlatformReset"/><method name="PlatformDesktopChanged"/><method name="PlatformApplicationsChanged"/><method name="PlatformBrightnessChanged"/>
  <method name="Ready"><arg name="component" type="s" direction="in"/></method>
  <signal name="StateChanged"><arg name="state" type="a{sv}"/></signal>
  <signal name="HardwareButton"><arg name="event" type="a{sv}"/></signal>
@@ -93,24 +89,6 @@ struct Component {
     bool expected = false;
     std::deque<gint64> restarts;
 };
-struct Device {
-    Session *owner;
-    std::string path;
-    int fd;
-    libevdev *ev{};
-    guint source{};
-    bool sync = false;
-    std::array<bool, 3> blocked{};
-    ~Device() {
-        if (source) {
-            g_source_remove(source);
-        }
-        if (ev) {
-            libevdev_free(ev);
-        }
-        close(fd);
-    }
-};
 static void remove_timer(guint &id) {
     if (id) {
         g_source_remove(id);
@@ -125,13 +103,18 @@ class Session {
     GMainLoop *loop = g_main_loop_new(nullptr, FALSE);
     GDBusConnection *bus{}, *system{};
     GDBusNodeInfo *node{};
-    std::array<Component, 7> components;
+    std::array<Component, 8> components;
+    Platform platform;
+    CredentialSettings credentials;
+    bool changing_credentials=false, secure_locked=false;
+    unsigned lock_generation=0;
+    bool unlocking=false; std::string queued_lock; guint unlock_deadline=0;
+    int sleep_delay=-1; bool sleep_delay_pending=false;
+    unsigned sleep_delay_generation=0;
     Desktop desktop;
-    std::unique_ptr<SystemStatus> status;
     std::unique_ptr<Keyboard> keyboard;
-    std::unique_ptr<NotificationTransport> notification_transport;
-    std::unique_ptr<AuthenticationAgent> authentication;
-    guint authentication_retry{};
+    std::unique_ptr<AuthenticationProxy> authentication;
+    guint authentication_retry{}, authentication_signal{};
     bool keyboard_available = false, keyboard_visible = false;
     std::string desktop_view = "closed";
     bool desktop_mapped = false;
@@ -154,38 +137,24 @@ class Session {
     unsigned haptics_interval = 45, brightness_minimum = 5;
     std::string wallpaper_id = "earthy-green";
     int lock_fd = -1, display_fd = -1;
-    udev *udev_context{};
-    udev_monitor *monitor{};
-    guint monitor_source{};
-    std::map<std::string, std::unique_ptr<Device>> devices;
-    Session(std::string dir): desktop(dir), root(std::move(dir)) {
-        const char *names[] = {"wallpaper", "top-bar", "power-menu", "lock-screen", "navigation", "keyboard", "authentication"};
+    Session(std::string dir): desktop(&platform), root(std::move(dir)) {
+        const char *names[] = {"wallpaper", "top-bar", "power-menu", "lock-screen", "navigation", "keyboard", "authentication", "platform"};
         for (unsigned i = 0; i < components.size(); i++) {
             components[i].owner = this;
             components[i].name = names[i];
         }
     }
     ~Session() {
+        release_sleep_delay();
         remove_timer(authentication_retry);
         authentication.reset();
-        notification_transport.reset();
         keyboard.reset();
-        status.reset();
         remove_timer(system_retry);
         remove_timer(unlock_timer);
+        remove_timer(unlock_deadline);
         remove_timer(idle_dispatch);
         remove_timer(display_source);
         if (display_fd >= 0) close(display_fd);
-        devices.clear();
-        if (monitor_source) {
-            g_source_remove(monitor_source);
-        }
-        if (monitor) {
-            udev_monitor_unref(monitor);
-        }
-        if (udev_context) {
-            udev_unref(udev_context);
-        }
         if (system_watch) {
             g_bus_unwatch_name(system_watch);
         }
@@ -200,6 +169,7 @@ class Session {
             g_object_unref(system);
         }
         if (bus) {
+            if (authentication_signal) g_dbus_connection_signal_unsubscribe(bus, authentication_signal);
             g_object_unref(bus);
         }
         if (lock_fd >= 0) {
@@ -216,6 +186,10 @@ class Session {
         g_variant_builder_add(&b, "{sv}", "Active", g_variant_new_boolean(active));
         s("PowerMenuState", menu);
         s("ScreenState", screen);
+        s("UserName", g_get_user_name());
+        credentials.append(b);
+        g_variant_builder_add(&b,"{sv}","SecureLocked",g_variant_new_boolean(secure_locked));
+        g_variant_builder_add(&b,"{sv}","LockGeneration",g_variant_new_uint32(lock_generation));
         g_variant_builder_add(&b, "{sv}", "DisplayOff", g_variant_new_boolean(display_off));
         g_variant_builder_add(&b, "{sv}", "PreparingForSleep", g_variant_new_boolean(preparing_sleep));
         g_variant_builder_add(&b, "{sv}", "SuspendPending", g_variant_new_boolean(suspend_pending));
@@ -247,7 +221,7 @@ class Session {
         s("CanPowerOff", power_cap);
         s("CanReboot", reboot_cap);
         s("CanSuspend", suspend_cap);
-        if (status) status->append(b);
+        platform.append(b);
         for (auto &c : components) {
             s((c.name + "Status").c_str(), c.status);
             guint32 pid = c.pid;
@@ -323,15 +297,14 @@ class Session {
         active = value;
         suspend_pending = false;
         cancel_hold();
-        devices.clear();
-        if (active) {
-            scan();
-        } else {
+        platform.send("SetActive", g_variant_new("(b)", active));
+        if (!active) {
             hide_keyboard();
             dismiss(true);
             dismiss_desktop();
             if (screen == "off") { screen = "locked"; display_power(true); }
         }
+        if (active && platform.ready && screen != "unlocked" && !components[3].process) lock_screen(screen);
         changed();
     }
     void discover_session() {
@@ -351,6 +324,7 @@ class Session {
         session_path = p;
         g_variant_unref(r);
         read_active();
+        acquire_sleep_delay();
         caps();
     }
     void read_active() {
@@ -404,13 +378,13 @@ class Session {
             }, q);
         }
     }
-    bool caller_is(GDBusMethodInvocation*i, Component&c) {
+    bool sender_is(const char *sender, Component&c) {
         if (!c.process) {
             return false;
         }
         GError*e = nullptr;
         GVariant*r = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
-                     "GetConnectionUnixProcessID", g_variant_new("(s)", g_dbus_method_invocation_get_sender(i)), G_VARIANT_TYPE("(u)"),
+                     "GetConnectionUnixProcessID", g_variant_new("(s)", sender), G_VARIANT_TYPE("(u)"),
                      G_DBUS_CALL_FLAGS_NONE, 2000, nullptr, &e);
         guint32 pid = 0;
         if (r) {
@@ -419,6 +393,16 @@ class Session {
         }
         g_clear_error(&e);
         return pid == c.pid;
+    }
+    bool caller_is(GDBusMethodInvocation *invocation, Component &component) { return sender_is(g_dbus_method_invocation_get_sender(invocation), component); }
+    GVariant *brightness_state() {
+        GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+        guint maximum = 0; gint percent = -1;
+        if (platform.snapshot) { g_variant_lookup(platform.snapshot, "BrightnessMaximum", "u", &maximum); g_variant_lookup(platform.snapshot, "BrightnessPercent", "i", &percent); }
+        g_variant_builder_add(&b, "{sv}", "Available", g_variant_new_boolean(maximum != 0));
+        g_variant_builder_add(&b, "{sv}", "Device", g_variant_new_string(platform.text("BrightnessDevice").c_str()));
+        g_variant_builder_add(&b, "{sv}", "Percent", g_variant_new_int32(percent));
+        return g_variant_builder_end(&b);
     }
     static void child_setup(gpointer parent) {
         prctl(PR_SET_PDEATHSIG, SIGTERM);
@@ -431,15 +415,14 @@ class Session {
             return;
         }
         c.expected = false;
-        // Populate icons before Koya indexes its asset mounts.
-        if (c.name == "navigation") g_variant_unref(desktop.applications());
         c.status = "starting";
         if (c.name == "power-menu") {
             menu = "starting";
         }
         GSubprocessLauncher*l = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
         g_subprocess_launcher_set_child_setup(l, child_setup, GINT_TO_POINTER(getpid()), nullptr);
-        if (c.name == "authentication") g_subprocess_launcher_unsetenv(l, "KOYA_DBUS_DEBUG");
+        if (c.name == "authentication" || c.name == "platform" || c.name == "lock-screen") g_subprocess_launcher_unsetenv(l, "KOYA_DBUS_DEBUG");
+        g_subprocess_launcher_setenv(l, "KOYA_PHONE_ROOT", root.c_str(), TRUE);
         std::string logdir = std::string(g_get_user_state_dir()) + "/koya-shell";
         g_mkdir_with_parents(logdir.c_str(), 0700);
         int logfd = open((logdir + "/" + c.name + ".log").c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
@@ -452,6 +435,16 @@ class Session {
         g_subprocess_launcher_take_stdout_fd(l, dup(logfd));
         g_subprocess_launcher_take_stderr_fd(l, logfd);
         std::string script = "apps/" + c.name + ".js";
+        std::string modules = g_getenv("KOYA_PHONE_MODULE_DIR") ? g_getenv("KOYA_PHONE_MODULE_DIR") : root + "/build/native/modules";
+        std::string source_root = root;
+        if (const char *source = g_getenv("KOYA_TEST_ROOT")) source_root = source;
+        if (const char *source = g_getenv("KOYA_DEV_CHECKOUT")) source_root = source;
+        g_mkdir_with_parents(desktop.icons.cache.c_str(), 0700);
+        std::string local_modules = root + "/build/native/modules";
+        std::string plugins = g_getenv("KOYA_PLUGIN_DIR") ? g_getenv("KOYA_PLUGIN_DIR") : "/usr/lib";
+        std::string library_path = local_modules + ":" + plugins;
+        if (const char *inherited = g_getenv("LD_LIBRARY_PATH")) library_path += std::string(":") + inherited;
+        g_subprocess_launcher_setenv(l, "LD_LIBRARY_PATH", library_path.c_str(), TRUE);
         std::vector<const char*>args;
         if (c.name == "keyboard") {
 #ifdef KOYA_TESTING
@@ -462,11 +455,11 @@ class Session {
 #endif
         } else
 #ifdef KOYA_TESTING
-        if (!fixture.empty())
+        if (!fixture.empty() && c.name != "platform")
             args = {fixture.c_str(), c.name.c_str(), nullptr};
         else
 #endif
-            args = {executable.c_str(), "-n", "/usr/lib", "-m", assets.c_str(), "-m", root.c_str(), "-m", desktop.icons.cache.c_str(), "-i", script.c_str(), nullptr};
+            args = {executable.c_str(), "-n", modules.c_str(), "-m", assets.c_str(), "-m", source_root.c_str(), "-m", root.c_str(), "-m", desktop.icons.cache.c_str(), "-i", script.c_str(), nullptr};
         GError*e = nullptr;
         c.process = g_subprocess_launcher_spawnv(l, args.data(), &e);
         g_object_unref(l);
@@ -491,7 +484,7 @@ class Session {
             remove_timer(c.kill_timer);
             c.owner->exited(c);
         }, &c);
-        c.deadline = g_timeout_add_seconds(12, [](gpointer p)->gboolean {
+        c.deadline = g_timeout_add_seconds(c.name == "platform" ? 30 : 12, [](gpointer p)->gboolean {
             auto&c = *static_cast<Component*>(p); c.deadline = 0; c.owner->log_error(c.name + " did not become ready");
             c.owner->terminate(c, false); return G_SOURCE_REMOVE;
         }, &c);
@@ -499,11 +492,17 @@ class Session {
     }
     void exited(Component&c) {
         c.status = "stopped";
+#ifndef KOYA_TESTING
+        if(c.name == "lock-screen" && screen != "unlocked" && (!secure_locked || unlocking) && !stopping) { log_error("Compositor lock could not be confirmed");stop(); }
+#endif
         if (c.name == "authentication" && authentication) {
             remove_timer(authentication_retry);
             authentication->stop();
         }
-        if (c.name == "top-bar" && notification_transport) notification_transport->detach();
+        if (c.name == "platform") {
+            platform.ready = false; desktop.available = false; cancel_hold();
+            if (!stopping) stop(); // Shared device ownership must not outlive its worker.
+        }
         if (c.name == "navigation") {
             desktop_view = "closed";
             desktop_mapped = false;
@@ -515,7 +514,7 @@ class Session {
                 error = "Power menu exited unexpectedly";
             }
         } else if (c.name == "lock-screen" && screen == "unlocked") {
-            // On-demand visual overlay; an intentional unlock ends its process.
+            secure_locked = false;
         } else if (c.name == "lock-screen" && c.expected && !stopping) {
             // A new lock arrived while the old overlay was being reaped.
             start(c);
@@ -554,6 +553,73 @@ class Session {
             if (!c.kill_timer)
                 c.kill_timer = g_timeout_add_seconds(2, [](gpointer p)->gboolean{auto&c = *static_cast<Component*>(p); c.kill_timer = 0; if (c.process)g_subprocess_force_exit(c.process); return G_SOURCE_REMOVE;}, &c);
         }
+    }
+    void release_sleep_delay() { if(sleep_delay>=0) { close(sleep_delay);sleep_delay=-1; } }
+    void acquire_sleep_delay() {
+        if(!system || sleep_delay>=0 || sleep_delay_pending || stopping) return;
+        sleep_delay_pending=true;
+        struct Request { Session *session; unsigned generation; };
+        g_dbus_connection_call_with_unix_fd_list(system,LOGIN,LOGIN_PATH,MANAGER,"Inhibit",
+            g_variant_new("(ssss)","sleep","Koya phone","Lock the session before suspend","delay"),G_VARIANT_TYPE("(h)"),
+            G_DBUS_CALL_FLAGS_NONE,3000,nullptr,nullptr,[](GObject *object,GAsyncResult *result,gpointer data) {
+                std::unique_ptr<Request> request(static_cast<Request *>(data));
+                auto *session=request->session;GError *error=nullptr;GUnixFDList *fds=nullptr;
+                GVariant *reply=g_dbus_connection_call_with_unix_fd_list_finish(G_DBUS_CONNECTION(object),&fds,result,&error);
+                const bool current=session->system==G_DBUS_CONNECTION(object) && request->generation==session->sleep_delay_generation;
+                if(current) session->sleep_delay_pending=false;
+                if(reply && fds) {
+                    gint32 index;g_variant_get(reply,"(h)",&index);int fd=g_unix_fd_list_get(fds,index,nullptr);
+                    if(fd>=0) {
+                        if(session->stopping || !current || (session->preparing_sleep && session->secure_locked)) close(fd);
+                        else { session->release_sleep_delay();session->sleep_delay=fd; }
+                    }
+                }
+                if(reply) g_variant_unref(reply);
+                if(fds) g_object_unref(fds);
+                g_clear_error(&error);
+            },new Request{this,++sleep_delay_generation});
+    }
+    void locked_hint(bool locked) {
+        if(!system || session_path.empty()) return;
+        g_dbus_connection_call(system, LOGIN, session_path.c_str(), "org.freedesktop.login1.Session", "SetLockedHint",
+            g_variant_new("(b)",locked), nullptr, G_DBUS_CALL_FLAGS_NONE, 3000, nullptr, nullptr, nullptr);
+    }
+    void configure_authentication(GDBusMethodInvocation *invocation,const char *mode,const char *salt,const char *current,const char *next) {
+        if(!active || screen != "unlocked" || stopping || pending || changing_credentials || preparing_sleep) {
+            fail(invocation,"Unlock the phone before changing authentication");return;
+        }
+        if((strcmp(mode,"password") && strcmp(mode,"pin")) || (!strcmp(mode,"pin") && !CredentialSettings::salt_ok(salt)) ||
+           (!strcmp(mode,"password") && *salt) || !*current || strlen(current)>512 || strlen(next)>512 ||
+           strlen(next)<8 || strpbrk(current,"\r\n") || strpbrk(next,"\r\n") || (!strcmp(mode,"pin") && !CredentialSettings::salt_ok(next))) {
+            fail(invocation,"Invalid password or PIN setup");return;
+        }
+        std::string error;
+        if(!credentials.stage(mode,salt,error)) { fail(invocation,"Cannot save authentication settings");return; }
+        changing_credentials=true;changed();
+        GSubprocessLauncher *launcher=g_subprocess_launcher_new(static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDIN_PIPE | G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_SILENCE));
+        g_subprocess_launcher_unsetenv(launcher,"KOYA_DBUS_DEBUG");
+        const char *helper="/usr/local/libexec/koya-credential-update";
+        const char *command[] = {"/usr/bin/pkexec",helper,nullptr};
+#ifdef KOYA_TESTING
+        if(const char *test=g_getenv("KOYA_TEST_CREDENTIAL_HELPER")) { command[0]=test;command[1]=nullptr; }
+#endif
+        GError *cause=nullptr;GSubprocess *process=g_subprocess_launcher_spawnv(launcher,command,&cause);g_object_unref(launcher);
+        if(!process) { changing_credentials=false;fail(invocation,"Could not start account password setup");g_clear_error(&cause);changed();return; }
+        struct Request { Session *session;GDBusMethodInvocation *invocation; };
+        auto *request=new Request{this,G_DBUS_METHOD_INVOCATION(g_object_ref(invocation))};
+        std::string input=std::string(current)+"\n"+next+"\n";
+        g_subprocess_communicate_utf8_async(process,input.c_str(),nullptr,[](GObject *object,GAsyncResult *result,gpointer data) {
+            auto *request=static_cast<Request *>(data);auto *session=request->session;
+            gchar *output=nullptr;GError *cause=nullptr;
+            bool ok=g_subprocess_communicate_utf8_finish(G_SUBPROCESS(object),result,&output,nullptr,&cause) && g_subprocess_get_successful(G_SUBPROCESS(object)) && output && !strcmp(output,"changed\n");
+            session->changing_credentials=false;std::string error;
+            if(ok && session->credentials.commit(error)) g_dbus_method_invocation_return_value(request->invocation,nullptr);
+            else fail(request->invocation,ok ? "Account updated; authentication settings need recovery" : "Authentication setup failed; check your current password");
+            // Keep pending parameters if a crash or ambiguous failure changed the account.
+            g_clear_error(&cause);g_free(output);g_object_unref(object);g_object_unref(request->invocation);delete request;session->changed();
+        },request);
+        // GLib copied the input before returning; discard our copy immediately.
+        std::fill(input.begin(),input.end(),'\0');
     }
     void set_setting(GDBusMethodInvocation *invocation, const char *name, const char *value) {
         if (!active || screen != "unlocked" || stopping || pending || preparing_sleep) {
@@ -794,7 +860,7 @@ class Session {
         return ok;
     }
     void update_idle(bool force = false) {
-        const unsigned seconds = !active || stopping || pending || preparing_sleep || screen == "off" ? 0
+        const unsigned seconds = !platform.ready || !active || stopping || pending || preparing_sleep || screen == "off" ? 0
             : screen == "locked" ? idle_screen_seconds : idle_lock_seconds;
         if (!active && display_fd < 0) return;
         if (!force && seconds == configured_idle) return;
@@ -805,17 +871,24 @@ class Session {
     }
     void lock_screen(const std::string &next) {
         if (!active || stopping || pending || (preparing_sleep && next != "off")) return;
+        if(unlocking) { queued_lock=next;display_power(false);changed();return; }
         remove_timer(unlock_timer);
+        if (screen == "unlocked") { ++lock_generation; secure_locked=false; if(components[3].process) components[3].status="starting"; }
         screen = next;
         hide_keyboard();
         dismiss();
         dismiss_desktop();
         if (!components[3].process) start(components[3]);
-        if (next != "off") display_power(true);
+        if (next != "off" && secure_locked) display_power(true);
         else if (components[3].status == "ready" && !display_power(false)) screen = "locked";
         changed();
     }
     void show() {
+#ifndef KOYA_TESTING
+        if (screen != "unlocked" && active && !stopping && !pending && !preparing_sleep) {
+            menu = "open"; changed(); return;
+        }
+#endif
         if (!active || stopping || pending || preparing_sleep || overlay().process) {
             return;
         }
@@ -828,6 +901,7 @@ class Session {
         start(overlay());
     }
     void dismiss(bool force = false) {
+        if (!overlay().process && menu != "pending") { menu="closed"; changed(); return; }
         if (pending && !force) {
             return;
         }
@@ -862,22 +936,21 @@ class Session {
             g_object_unref(settings); g_settings_schema_unref(schema);
         }
 #endif
-        keyboard = std::make_unique<Keyboard>(bus, [this] {
-            if (stopping) return;
-            auto &c = components[5];
-            bool became_visible = keyboard->visible() && (!keyboard_visible || !keyboard_available);
-            keyboard_available = keyboard->available(); keyboard_visible = keyboard->visible();
-            if (keyboard->available()) {
-                remove_timer(c.deadline);
-                c.status = c.process ? "ready" : "external";
-                if (became_visible && (!desktop_allowed() || desktop_view != "closed")) hide_keyboard();
-            } else if (!c.process && (c.status == "stopped" || c.status == "external")) {
-                start(c);
-            }
-            if (!keyboard->error().empty()) error = keyboard->error();
-            changed();
-        });
+        keyboard = std::make_unique<Keyboard>(&platform);
+        keyboard_changed();
     }
+    void keyboard_changed() {
+        if (!keyboard || stopping) return;
+        auto &c = components[5];
+        bool became_visible = keyboard->visible() && (!keyboard_visible || !keyboard_available);
+        keyboard_available = keyboard->available(); keyboard_visible = keyboard->visible();
+        if (keyboard_available) {
+            remove_timer(c.deadline); c.status = c.process ? "ready" : "external";
+            if (became_visible && (!desktop_allowed() || desktop_view != "closed")) hide_keyboard();
+        } else if (!c.process && (c.status == "stopped" || c.status == "external")) start(c);
+        if (!keyboard->error().empty()) error = keyboard->error();
+    }
+
     void stop() {
         if (stopping) {
             return;
@@ -890,8 +963,8 @@ class Session {
         remove_timer(idle_dispatch);
         remove_timer(system_retry);
         remove_timer(unlock_timer);
+        remove_timer(unlock_deadline);
         cancel_hold();
-        devices.clear();
         bool live = false;
         for (auto&c : components) {
             live |= c.process != nullptr;
@@ -909,7 +982,7 @@ class Session {
         bool interactive = false;
     };
     void action(GDBusMethodInvocation*i, bool reboot) {
-        if (!active || pending || menu != "open" || !caller_is(i, overlay())) {
+        if (!active || pending || menu != "open" || (!caller_is(i, overlay()) && !(screen == "locked" && caller_is(i, components[3])))) {
             fail(i, "Power actions require the active power menu and no pending action");
             return;
         }
@@ -966,7 +1039,7 @@ class Session {
     }
     bool sleep_ready() const {
         return system && active && !stopping && !pending && !preparing_sleep &&
-            screen == "off" && display_off && components[3].status == "ready" && !components[3].expected;
+            screen == "off" && display_off && secure_locked && components[3].status == "ready" && !components[3].expected;
     }
     struct SleepRequest {
         Session *session;
@@ -1030,14 +1103,15 @@ class Session {
         preparing_sleep = preparing;
         cancel_hold();
         if (preparing) {
-            // Also cover suspend requested outside Koya. This remains a visual
-            // lock, not a compositor-enforced security boundary.
+            // Cover suspend requested outside Koya too.
             lock_screen("off");
+            if(secure_locked) release_sleep_delay();
         } else if (was_preparing) {
             suspend_pending = false;
             ++resume_count;
             wake_key_until = g_get_monotonic_time() + 750000;
             if (active && !stopping && !pending) lock_screen("locked");
+            acquire_sleep_delay();
             caps();
         }
         changed();
@@ -1067,7 +1141,7 @@ class Session {
             } else if (!strcmp(name, "Idle")) {
                 s.idle_expired();
             } else if (!strcmp(name, "PowerSupplyChanged")) {
-                s.status->battery_changed();
+                s.platform.send("RefreshDevices");
             } else {
                 s.cancel_hold();
             }
@@ -1077,6 +1151,23 @@ class Session {
 #else
         (void)iface;
 #endif
+        if (g_str_has_prefix(name, "Platform")) {
+            if (!s.caller_is(i, s.components[7])) { fail(i, "Platform events require the owned worker"); return; }
+            if (!strcmp(name, "PlatformState")) {
+                GVariant *values; g_variant_get(args, "(@a{sv})", &values);
+                bool changed = s.platform.update(values); g_variant_unref(values);
+                s.desktop.available = s.platform.boolean("DesktopAvailable"); s.keyboard_changed();
+                if (s.platform.ready && s.desktop.available && !s.components[4].process) s.start(s.components[4]);
+                if (!s.desktop.available) { s.hide_keyboard(); s.dismiss_desktop(); }
+                if (!s.platform.text("DeviceError").empty()) s.error = s.platform.text("DeviceError");
+                if (changed) s.changed();
+            } else if (!strcmp(name, "PlatformButton")) { guint code, value; g_variant_get(args, "(uu)", &code, &value); s.button(code, value); }
+            else if (!strcmp(name, "PlatformReset")) s.cancel_hold();
+            else if (!strcmp(name, "PlatformDesktopChanged")) g_dbus_connection_emit_signal(s.bus, nullptr, PATH, BUS, "DesktopChanged", nullptr, nullptr);
+            else if (!strcmp(name, "PlatformApplicationsChanged")) g_dbus_connection_emit_signal(s.bus, nullptr, PATH, BUS, "ApplicationsChanged", nullptr, nullptr);
+            else if (!strcmp(name, "PlatformBrightnessChanged")) g_dbus_connection_emit_signal(s.bus, nullptr, PATH, BUS, "BrightnessChanged", nullptr, nullptr);
+            g_dbus_method_invocation_return_value(i, nullptr); return;
+        }
         if (!strcmp(name, "GetState")) {
             g_dbus_method_invocation_return_value(i, g_variant_new("(@a{sv})", s.state()));
             return;
@@ -1087,7 +1178,7 @@ class Session {
         }
         if (!strcmp(name, "Suspend")) { s.suspend(i); return; }
         if (!strcmp(name, "GetBrightness")) {
-            g_dbus_method_invocation_return_value(i, g_variant_new("(@a{sv})", Backlight::read().variant())); return;
+            g_dbus_method_invocation_return_value(i, g_variant_new("(@a{sv})", s.brightness_state())); return;
         }
         if (!strcmp(name, "SetBrightness")) {
             guint percent; g_variant_get(args, "(u)", &percent);
@@ -1095,34 +1186,30 @@ class Session {
                 fail(i, "Brightness requires the active unlocked top bar"); return;
             }
             if (percent < 1 || percent > 100) { fail(i, "Brightness must be between 1 and 100 percent"); return; }
-            auto device = Backlight::read();
-            if (!device.maximum || !s.system || s.session_path.empty()) { fail(i, "Display brightness unavailable"); return; }
-            guint level = std::max(1u, static_cast<guint>((guint64(device.maximum) * percent + 50) / 100));
+            guint maximum = 0; if (s.platform.snapshot) g_variant_lookup(s.platform.snapshot, "BrightnessMaximum", "u", &maximum);
+            std::string device = s.platform.text("BrightnessDevice");
+            if (!maximum || !s.system || s.session_path.empty()) { fail(i, "Display brightness unavailable"); return; }
+            guint level = std::max(1u, static_cast<guint>((guint64(maximum) * percent + 50) / 100));
             // elogind already has the privilege and verifies the session's seat.
             // The shell needs neither a root helper nor writable sysfs files.
-            struct Request { GDBusMethodInvocation *invocation; };
+            struct Request { Session *session; GDBusMethodInvocation *invocation; };
             g_dbus_connection_call(s.system, LOGIN, s.session_path.c_str(), "org.freedesktop.login1.Session", "SetBrightness",
-                g_variant_new("(ssu)", "backlight", device.name.c_str(), level), nullptr,
+                g_variant_new("(ssu)", "backlight", device.c_str(), level), nullptr,
                 G_DBUS_CALL_FLAGS_NONE, 1500, nullptr, [](GObject *object, GAsyncResult *result, gpointer data) {
                     std::unique_ptr<Request> request(static_cast<Request *>(data));
                     GError *error = nullptr;
                     GVariant *reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(object), result, &error);
                     if (reply) {
                         g_variant_unref(reply);
-                        g_dbus_method_invocation_return_value(request->invocation, g_variant_new("(@a{sv})", Backlight::read().variant()));
+                        request->session->platform.send("RefreshDevices");
+                        Platform::relay(request->session->bus, "org.koya.Platform1", "/org/koya/Platform1", "org.koya.Platform1", "GetBrightness", nullptr, request->invocation);
                     } else fail(request->invocation, error ? error->message : "Cannot change brightness");
                     g_clear_error(&error); g_object_unref(request->invocation);
-                }, new Request{G_DBUS_METHOD_INVOCATION(g_object_ref(i))});
+                }, new Request{&s, G_DBUS_METHOD_INVOCATION(g_object_ref(i))});
             return;
         }
-        if (!strcmp(name, "RegisterNotifications")) {
-            if (!s.caller_is(i, s.components[1]) || !s.notification_transport->attach(g_dbus_method_invocation_get_sender(i))) {
-                fail(i, "Cannot register notification frontend; another server may own the notification name"); return;
-            }
-            g_dbus_method_invocation_return_value(i, nullptr); return;
-        }
         if (!strcmp(name, "Askpass")) {
-            if (!s.authentication || s.components[6].status != "ready" || s.stopping) {
+            if (!s.authentication || s.components[6].status != "ready" || !s.active || s.screen != "unlocked" || s.stopping || s.preparing_sleep) {
                 fail(i, "Koya authentication dialog is unavailable"); return;
             }
             const char *question, *mode;
@@ -1136,6 +1223,9 @@ class Session {
             }
             guint id;
             if (!strcmp(name, "AuthenticationRespond")) {
+                if (!s.active || s.screen != "unlocked" || s.stopping || s.preparing_sleep) {
+                    fail(i, "Authentication requires an active unlocked session"); return;
+                }
                 const char *response;
                 g_variant_get(args, "(u&s)", &id, &response);
 #ifdef KOYA_TESTING
@@ -1157,30 +1247,12 @@ class Session {
             }
             g_dbus_method_invocation_return_value(i, nullptr); return;
         }
-        if (!strcmp(name, "ReplyNotification") || !strcmp(name, "EmitNotification")) {
-            if (!s.notification_transport->owns(g_dbus_method_invocation_get_sender(i))) { fail(i, "Notification transport requires the registered frontend"); return; }
-            bool ok = false;
-            if (!strcmp(name, "ReplyNotification")) {
-                guint token; GVariant *payload; g_variant_get(args, "(u@a{sv})", &token, &payload);
-                ok = s.notification_transport->reply(token, payload); g_variant_unref(payload);
-            } else {
-                const char *destination, *member, *action; guint id, reason;
-                g_variant_get(args, "(&s&su&su)", &destination, &member, &id, &action, &reason);
-                ok = s.notification_transport->emit(destination, member, id, action, reason);
-            }
-            if (!ok) { fail(i, "Invalid notification transport request"); return; }
-            g_dbus_method_invocation_return_value(i, nullptr); return;
-        }
         if (!strcmp(name, "GetApplications")) {
-            g_dbus_method_invocation_return_value(i, g_variant_new("(@aa{sv})", s.desktop.applications()));
+            Platform::relay(s.bus, "org.koya.Platform1", "/org/koya/Platform1", "org.koya.Platform1", name, args, i, 10000);
             return;
         }
         if (!strcmp(name, "ResolveIcon")) {
-            const char *description; g_variant_get(args, "(&s)", &description);
-            GIcon *icon = g_icon_new_for_string(description, nullptr);
-            std::string texture = icon ? s.desktop.icons.resolve(icon) : "";
-            if (icon) g_object_unref(icon);
-            g_dbus_method_invocation_return_value(i, g_variant_new("(s)", texture.c_str())); return;
+            Platform::relay(s.bus, "org.koya.Platform1", "/org/koya/Platform1", "org.koya.Platform1", name, args, i, 10000); return;
         }
         if (!strcmp(name, "GetDesktopState")) {
             if (!s.desktop.available) { fail(i, "Hyprland is unavailable"); return; }
@@ -1238,22 +1310,49 @@ class Session {
             s.action(i, !strcmp(name, "Reboot"));
             return;
         }
+        if (!strcmp(name,"ConfigureAuthentication")) {
+            const char *mode,*salt,*current,*next;g_variant_get(args,"(&s&s&s&s)",&mode,&salt,&current,&next);
+            s.configure_authentication(i,mode,salt,current,next);return;
+        }
         if (!strcmp(name, "Lock")) {
             if (!s.active || s.pending) { fail(i, "Session is inactive or busy"); return; }
             s.lock_screen("locked");
-        } else if (!strcmp(name, "Unlock")) {
-            if (!s.active || s.screen != "locked" || s.pending || s.preparing_sleep || !s.caller_is(i, s.components[3])) {
-                fail(i, "Unlock requires the visible lock screen"); return;
+        } else if (!strcmp(name,"BeginUnlock")) {
+            guint32 generation;g_variant_get(args,"(u)",&generation);
+            if(s.unlocking || generation!=s.lock_generation || !s.secure_locked || !s.active || s.screen!="locked" || s.pending || s.preparing_sleep || !s.caller_is(i,s.components[3])) {
+                fail(i,"Unlock authorization is no longer valid");return;
             }
-            s.screen = "unlocked";
-            // Return the D-Bus result before terminating its calling process.
-            s.unlock_timer = g_timeout_add(100, [](gpointer p)->gboolean {
-                auto *session = static_cast<Session*>(p);
-                session->unlock_timer = 0;
-                if (session->screen == "unlocked") session->terminate(session->components[3]);
+            s.unlocking=true;s.queued_lock.clear();
+            s.unlock_deadline=g_timeout_add_seconds(3,[](gpointer data)->gboolean {
+                auto *session=static_cast<Session *>(data);session->unlock_deadline=0;
+                session->log_error("Unlock did not complete");session->stop();return G_SOURCE_REMOVE;
+            },&s);
+        } else if (!strcmp(name,"CancelUnlock")) {
+            guint32 generation;g_variant_get(args,"(u)",&generation);
+            if(generation!=s.lock_generation || !s.caller_is(i,s.components[3])) { fail(i,"Invalid unlock cancellation");return; }
+            remove_timer(s.unlock_deadline);s.unlocking=false;
+            const auto next=s.queued_lock;s.queued_lock.clear();if(!next.empty()) s.lock_screen(next);
+        } else if (!strcmp(name, "Unlock")) {
+            guint32 generation; g_variant_get(args,"(u)",&generation);
+            if (!s.unlocking || generation != s.lock_generation || !s.caller_is(i, s.components[3])) {
+                fail(i, "Unlock requires the authorized lock screen"); return;
+            }
+            remove_timer(s.unlock_deadline);s.unlocking=false;
+            const std::string relock=!s.queued_lock.empty()?s.queued_lock:!s.active || s.preparing_sleep?"locked":"";
+            s.queued_lock.clear();s.secure_locked=false;
+            if(!relock.empty()) {
+                ++s.lock_generation;s.screen=relock;s.components[3].status="starting";
+                s.display_power(false);s.changed();
+                g_dbus_method_invocation_return_value(i,g_variant_new("(b)",FALSE));return;
+            }
+            s.screen="unlocked";s.locked_hint(false);
+            s.unlock_timer = g_timeout_add(250, [](gpointer p)->gboolean {
+                auto *session = static_cast<Session*>(p);session->unlock_timer = 0;
+                if(session->screen == "unlocked") session->terminate(session->components[3]);
                 return G_SOURCE_REMOVE;
             }, &s);
             s.changed();
+            g_dbus_method_invocation_return_value(i,g_variant_new("(b)",TRUE));return;
         } else if (!strcmp(name, "ShowPowerMenu")) {
             if (!s.active) {
                 fail(i, "Graphical session is inactive");
@@ -1275,6 +1374,14 @@ class Session {
                     matched = true;
                     remove_timer(c.deadline);
                     c.status = "ready";
+                    if (c.name == "platform") {
+                        s.platform.ready = true;
+                        s.platform.send("SetActive", g_variant_new("(b)", s.active));
+                        s.start(s.components[0]); s.start(s.components[1]); s.start(s.components[6]);
+                        if (s.desktop.available) s.start(s.components[4]);
+                    }
+                    if (c.name == "platform" && s.screen != "unlocked") s.lock_screen(s.screen);
+                    if (c.name == "lock-screen") { s.secure_locked=true; s.locked_hint(true); if(s.screen=="locked") s.display_power(true); if(s.preparing_sleep) s.release_sleep_delay(); }
                     // Map navigation first so the OSK honours its bottom reservation.
                     if (c.name == "navigation" && !s.keyboard) s.init_keyboard();
                     if (c.name == "lock-screen" && s.screen == "off" && !s.display_power(false)) s.screen = "locked";
@@ -1299,114 +1406,6 @@ class Session {
         }
         g_dbus_method_invocation_return_value(i, nullptr);
     }
-    void add_device(const char*path) {
-#ifndef KOYA_TESTING
-        if (!active || !path || devices.count(path)) {
-            return;
-        }
-        int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-        if (fd < 0) {
-            g_warning("Cannot open input %s: %s", path, strerror(errno));
-            return;
-        }
-        auto d = std::make_unique<Device>();
-        d->owner = this;
-        d->path = path;
-        d->fd = fd;
-        if (libevdev_new_from_fd(fd, &d->ev) < 0) {
-            return;
-        }
-        const char*name = libevdev_get_name(d->ev);
-        if (!name || (strcmp(name, "pm8941_pwrkey") && strcmp(name, "Volume keys"))) {
-            return;
-        }
-        bool relevant = false;
-        for (unsigned code = 0; code <= KEY_MAX; code++)
-            if (libevdev_has_event_code(d->ev, EV_KEY, code)) {
-                if (code < KEY_VOLUMEDOWN || code > KEY_POWER) {
-                    return;
-                }
-                relevant = true;
-            }
-        if (!relevant) {
-            return;
-        }
-        if (libevdev_grab(d->ev, LIBEVDEV_GRAB) < 0) {
-            log_error(std::string("Cannot capture ") + name);
-            return;
-        }
-        for (unsigned k = KEY_VOLUMEDOWN; k <= KEY_POWER; k++) {
-            d->blocked[k - KEY_VOLUMEDOWN] = libevdev_get_event_value(d->ev, EV_KEY, k) != 0;
-        }
-        d->source = g_unix_fd_add(fd, static_cast<GIOCondition>(G_IO_IN | G_IO_HUP | G_IO_ERR), [](gint, GIOCondition cond, gpointer p)->gboolean{
-            auto*d = static_cast<Device*>(p); auto*s = d->owner;
-            if (cond & (G_IO_HUP | G_IO_ERR)) {
-                std::string path = d->path;
-                d->source = 0;
-                s->cancel_hold();
-                s->devices.erase(path);
-                return G_SOURCE_REMOVE;
-            }
-            input_event event{}; int rc;
-            while (true) {
-                rc = libevdev_next_event(d->ev, d->sync ? LIBEVDEV_READ_FLAG_SYNC : LIBEVDEV_READ_FLAG_NORMAL, &event);
-                if (rc == LIBEVDEV_READ_STATUS_SYNC) {
-                    d->sync = true;
-                    s->cancel_hold();
-                    continue;
-                }
-                if (rc == -EAGAIN && d->sync) {
-                    d->sync = false;
-                    for (unsigned k = KEY_VOLUMEDOWN; k <= KEY_POWER; k++) {
-                        d->blocked[k - KEY_VOLUMEDOWN] = libevdev_get_event_value(d->ev, EV_KEY, k) != 0;
-                    }
-                    continue;
-                }
-                if (rc < 0) {
-                    break;
-                }
-                if (event.type == EV_KEY && event.code >= KEY_VOLUMEDOWN && event.code <= KEY_POWER) {
-                    if (d->blocked[event.code - KEY_VOLUMEDOWN]) {
-                        if (event.value == 0) {
-                            d->blocked[event.code - KEY_VOLUMEDOWN] = false;
-                        }
-                        continue;
-                    }
-                    s->button(event.code, event.value);
-                }
-            }
-            if (rc != -EAGAIN) {
-                std::string path = d->path;
-                d->source = 0;
-                s->cancel_hold();
-                s->devices.erase(path);
-                return G_SOURCE_REMOVE;
-            }
-            return G_SOURCE_CONTINUE;
-        }, d.get());
-        g_message("Capturing %s (%s)", name, path);
-        devices.emplace(path, std::move(d));
-#else
-        (void)path;
-#endif
-    }
-    void scan() {
-        if (!active || !udev_context) {
-            return;
-        }
-        udev_enumerate*e = udev_enumerate_new(udev_context);
-        udev_enumerate_add_match_subsystem(e, "input");
-        udev_enumerate_scan_devices(e);
-        udev_list_entry*entry;
-        udev_list_entry_foreach(entry, udev_enumerate_get_list_entry(e)) {
-            udev_device*d = udev_device_new_from_syspath(udev_context, udev_list_entry_get_name(entry));
-            if (d) {
-                add_device(udev_device_get_devnode(d));
-                udev_device_unref(d);
-            }
-        }
-        udev_enumerate_unref(e);
-    }
     void retry_system() {
         if (stopping || system_retry) {
             return;
@@ -1419,10 +1418,12 @@ class Session {
         GError *e = nullptr;
         system = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, &e);
         if (system) {
-            status->connect(system);
             g_dbus_connection_set_exit_on_close(system, FALSE);
             g_signal_connect(system, "closed", G_CALLBACK(+[](GDBusConnection*, gboolean, GError*, gpointer p) {
                 auto*s = static_cast<Session*>(p);
+                s->release_sleep_delay();
+                s->sleep_delay_pending = false;
+                ++s->sleep_delay_generation;
                 s->set_active(false);
                 ++s->login_generation;
                 if (s->system_watch) {
@@ -1439,7 +1440,6 @@ class Session {
                 }
                 g_object_unref(s->system);
                 s->system = nullptr;
-                s->init_status();
                 s->power_cap = s->reboot_cap = s->suspend_cap = "unavailable";
                 s->preparing_sleep = s->suspend_pending = false;
                 s->changed();
@@ -1465,6 +1465,9 @@ class Session {
             [](GDBusConnection*, const char*, gpointer p) {
                 auto*s = static_cast<Session*>(p);
                 ++s->login_generation;
+                s->release_sleep_delay();
+                s->sleep_delay_pending = false;
+                ++s->sleep_delay_generation;
                 s->set_active(false);
                 s->power_cap = s->reboot_cap = s->suspend_cap = "unavailable";
                 s->preparing_sleep = s->suspend_pending = false;
@@ -1475,13 +1478,6 @@ class Session {
             g_clear_error(&e);
             retry_system();
         }
-    }
-    void init_status() {
-        std::string supplies = "/sys/class/power_supply";
-#ifdef KOYA_TESTING
-        supplies = g_getenv("KOYA_TEST_POWER_SUPPLY_DIR") ? g_getenv("KOYA_TEST_POWER_SUPPLY_DIR") : "/nonexistent/koya-test-power-supply";
-#endif
-        status = std::make_unique<SystemStatus>(supplies, [this] { changed(); });
     }
     bool init() {
         const char*runtime = g_getenv("XDG_RUNTIME_DIR");
@@ -1494,6 +1490,10 @@ class Session {
             g_printerr("Another phone shell owns the session lock\n");
             return false;
         }
+        if (const char *binary = g_getenv("KOYA_BIN")) executable = binary;
+        if (const char *directory = g_getenv("KOYA_ASSET_DIR")) assets = directory;
+        if (const char *binary = g_getenv("KOYA_DEV_KOYA")) executable = binary;
+        if (const char *directory = g_getenv("KOYA_DEV_ASSETS")) assets = directory;
         GError*e = nullptr;
         bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &e);
         if (!bus) {
@@ -1527,67 +1527,28 @@ class Session {
                 return false;
             }
         g_dbus_connection_set_exit_on_close(bus, FALSE);
-        notification_transport = std::make_unique<NotificationTransport>(bus);
-        authentication = std::make_unique<AuthenticationAgent>(bus);
+        platform.bus = bus;
+        authentication = std::make_unique<AuthenticationProxy>(&platform);
         g_signal_connect(bus, "closed", G_CALLBACK(+[](GDBusConnection*, gboolean, GError*, gpointer p) {
             static_cast<Session*>(p)->stop();
         }), this);
-#ifndef KOYA_TESTING
-        udev_context = udev_new();
-        if (!udev_context) {
-            g_printerr("udev initialization failed\n");
-            return false;
-        }
-        monitor = udev_monitor_new_from_netlink(udev_context, "udev");
-        if (!monitor) {
-            return false;
-        }
-        udev_monitor_filter_add_match_subsystem_devtype(monitor, "input", nullptr);
-        udev_monitor_filter_add_match_subsystem_devtype(monitor, "power_supply", nullptr);
-        udev_monitor_filter_add_match_subsystem_devtype(monitor, "backlight", nullptr);
-        udev_monitor_enable_receiving(monitor);
-        monitor_source = g_unix_fd_add(udev_monitor_get_fd(monitor), G_IO_IN, [](gint, GIOCondition, gpointer p)->gboolean {
-            auto*s = static_cast<Session*>(p); udev_device*d;
-            while ((d = udev_monitor_receive_device(s->monitor))) {
-                const char *subsystem = udev_device_get_subsystem(d);
-                if (subsystem && !strcmp(subsystem, "backlight")) {
-                    g_dbus_connection_emit_signal(s->bus, nullptr, PATH, BUS, "BrightnessChanged", nullptr, nullptr);
-                    udev_device_unref(d); continue;
-                }
-                if (subsystem && !strcmp(subsystem, "power_supply")) {
-                    s->status->battery_changed(); udev_device_unref(d); continue;
-                }
-                const char*path = udev_device_get_devnode(d), *action = udev_device_get_action(d);
-                if (path && action) {
-                    if (!strcmp(action, "remove")) {
-                        if (s->devices.erase(path)) {
-                            s->cancel_hold();
-                        }
-                    } else if (!strcmp(action, "add") || !strcmp(action, "change")) {
-                        s->add_device(path);
-                    }
-                }
-                udev_device_unref(d);
-            }
-            return G_SOURCE_CONTINUE;
-        }, this);
-#endif
         read_idle_config();
-        init_status();
+        credentials.load();
+#ifndef KOYA_TESTING
+        screen = "locked";
+#endif
         connect_system();
         for (int sig : {
                     SIGTERM, SIGINT, SIGHUP
                 })g_unix_signal_add(sig, [](gpointer p)->gboolean{static_cast<Session*>(p)->stop(); return G_SOURCE_REMOVE;}, this);
-        start(components[0]);
-        start(components[1]);
-        start(components[6]);
-        desktop.home_selected = [this] { hide_keyboard(); };
-        if (desktop.init([this](bool applications) {
-            if (applications) g_dbus_connection_emit_signal(bus, nullptr, PATH, BUS, "ApplicationsChanged", nullptr, nullptr);
-            g_dbus_connection_emit_signal(bus, nullptr, PATH, BUS, "DesktopChanged", nullptr, nullptr);
-        })) {
-            start(components[4]);
-        }
+        authentication_signal = g_dbus_connection_signal_subscribe(bus, "org.koya.Authentication1", "org.koya.Authentication1", nullptr, PATH, nullptr,
+            G_DBUS_SIGNAL_FLAGS_NONE, [](GDBusConnection *, const char *sender, const char *, const char *, const char *member, GVariant *args, gpointer data) {
+                auto *self = static_cast<Session *>(data);
+                if (!self->sender_is(sender, self->components[7])) return;
+                if (strcmp(member, "AuthenticationBegin") && strcmp(member, "AuthenticationPrompt") && strcmp(member, "AuthenticationMessage") && strcmp(member, "AuthenticationEnd")) return;
+                g_dbus_connection_emit_signal(self->bus, nullptr, PATH, BUS, member, args, nullptr);
+            }, this, nullptr);
+        start(components[7]);
         g_message("Session coordinator ready");
         return true;
     }

@@ -6,7 +6,7 @@ let selected = WALLPAPERS[0], serial = 0, queue = Promise.resolve();
 const surfaces = new Set();
 const frameIndex = wallpaper => WALLPAPERS.indexOf(wallpaper);
 
-// Share the current artwork across home, swipe screen and dimmed sheet backdrops.
+// Share the current artwork across home, lock screen and dimmed sheet backdrops.
 // Predefined frames let each texture retain its own crop without replacing UI nodes.
 const artwork = (win, size, colour) => UI.createElement(win, {
   renderable: { type: 'sprite', texture: selected.texture, frame: frameIndex(selected),

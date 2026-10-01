@@ -8,8 +8,8 @@ coordinator with hardware input capture disabled, using its own Meson project.
 
 ## Run in Alpine
 
-The container workflow installs Koya and its matching D-Bus/process plugins from
-the [Koya Alpine repository](https://developer.koya-ui.com/install/index.html#alpine-postmarketos-repository).
+The container workflow installs Koya and its matching DBus, Hyprland and process
+plugins from the [Koya Alpine repository](https://developer.koya-ui.com/install/index.html#alpine-postmarketos-repository).
 The setup authenticates the repository's public key with Koya's pinned signing
 key; `apk` verifies the repository index and packages. The image supplies the
 runtime, Hyprland and native development dependencies. The launcher and
@@ -39,8 +39,8 @@ Pass session options after `--`:
 `--koya-version VERSION` requests a specific APK version, provided it is still
 available in the repository. Explicit Koya or Hyprland version options trigger
 an image build. Builds using `latest` disable image build caching to install the
-current release. Koya and both plugins use the same version,
-and require build 891 or newer.
+current release. Koya and its plugins use the same version,
+and must include the session-lock API.
 Use `--hyprland-version` for another 0.54.x version available in Alpine 3.24's
 repositories. The generated development configuration translates the phone's
 0.51 rules to 0.54 syntax. Aquamarine **0.12.0** in this image includes the
@@ -93,9 +93,7 @@ To check the buffer ordering, run `tests/capture-rotation.js` with
 viewport size changes on mapped windows arrive with a new buffer, including the
 wallpaper layer, rather than stretching the previous frame.
 
-Live rotation requires Koya build 891 or newer, which provides `windowResized`,
-updated layer viewports and `anchor: 'fill'` support. Rebuild an older development
-image to install the current release:
+Rebuild an older development image to install the current Koya release:
 
 ```bash
 ./local-dev.sh --rebuild-image
@@ -116,11 +114,11 @@ runner can also run directly on the host.
   that supports nested Hyprland's Wayland backend.
 - Hyprland **0.54.x**, matching the generated development configuration, with
   Aquamarine **0.10.0 or newer** for its nested Wayland frame-callback fix.
-- An installed Koya release, build **891 or newer**, with its matching
-  D-Bus/process plugins and engine assets. The runtime must be compatible with
+- A current Koya release with session-lock support and matching DBus, Hyprland, process and PAM plugins
+  and engine assets. The runtime must be compatible with
   your host's architecture and C library. The published Alpine APKs work in the
   container environment described above.
-- Bash, Meson, Ninja, pkg-config, a C/C++ compiler, GLib/GIO, libevdev, libudev, polkit development libraries and Wayland client
+- Bash, Meson, Ninja, pkg-config, a C/C++ compiler, GLib/GIO, libevdev, libudev, polkit, OpenSSL and PAM development libraries and Wayland client
   development headers. The runtime also needs `dbus-run-session`, `gdbus`,
   `setsid`, `timeout` and `realpath`.
 - GdkPixbuf with SVG support for application icons.
@@ -179,10 +177,15 @@ relaunch to pick up native C++ changes.
 | --- | --- |
 | F5 | Restart shell components |
 | F6 | Open the power menu |
-| F7 | Simulate a short power press: screen off / wake to the swipe screen |
+| F7 | Simulate a short power press: screen off / wake to the lock screen |
 | F8 | Send a sample notification |
 | F9 / F10 | Simulate volume down / up |
 | F12 | Exit the development compositor |
+
+The container lock screen uses the development account password, **koya**.
+In a host session, enter your host account password. Password/PIN enrollment
+requires a real login and polkit service; the nested mock services do not
+authorize account password changes.
 
 Ctrl+C in the launching terminal also closes the session. Logs are retained in
 `dev/.build/container/logs/<timestamp>-<pid>/` (or `dev/.build/host/logs/` for host

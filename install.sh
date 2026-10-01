@@ -192,18 +192,16 @@ configure_koya_repository() {
     case "$download_base" in https://*) ;; *) die 'KOYA_DOWNLOAD_BASE must use HTTPS.' ;; esac
     if [ "$koya_version" != latest ]; then
         printf '%s\n' "$koya_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$' || die 'Use latest or an APK version available in the Koya repository.'
-        [ "${koya_version##*-r}" -ge 891 ] || die 'This shell requires Koya build 891 or newer (live resize events and rotation-aware layer surfaces).'
+        [ "${koya_version##*-r}" -ge 892 ] || die 'This shell requires Koya build 892 or newer.'
     fi
     manifest "$source_dir/install/packages/koya.list" >"$work/koya-package-names"
-    [ "$(cat "$work/koya-package-names")" = "$(printf 'koya\nhelix-plugin-dbus\nhelix-plugin-process')" ] || die 'Unexpected Koya package set.'
+    [ "$(cat "$work/koya-package-names")" = "$(printf 'koya\nhelix-plugin-dbus\nhelix-plugin-hypr\nhelix-plugin-process\nhelix-plugin-pam')" ] || die 'Unexpected Koya package set.'
     : >"$work/koya-packages"
     while IFS= read -r package; do
         if [ "$koya_version" != latest ]; then
             printf '%s@koya=%s\n' "$package" "$koya_version"
-        elif [ "$package" = koya ]; then
-            printf 'koya@koya>=0.5.3-r891\n'
         else
-            printf '%s@koya\n' "$package"
+            printf '%s@koya>=0.5.3-r892\n' "$package"
         fi
     done <"$work/koya-package-names" >"$work/koya-packages"
     verify_koya_key
@@ -228,9 +226,9 @@ install_packages() {
     # APK verifies the repository index and packages using the authenticated key.
     as_root apk add --simulate --upgrade "$@"
     as_root apk add --upgrade "$@"
-    apk info -v -e koya helix-plugin-dbus helix-plugin-process >"$work/koya-installed"
+    apk info -v -e koya helix-plugin-dbus helix-plugin-hypr helix-plugin-process helix-plugin-pam >"$work/koya-installed"
     apk info -v -e hyprland | grep -q '^hyprland-0\.51\.' || die 'Installed Hyprland is not 0.51.x.'
-    for needed in /usr/bin/koya /usr/lib/libhx-dbus.so /usr/lib/libhx-process.so \
+    for needed in /usr/bin/koya /usr/lib/libhx-dbus.so /usr/lib/libhx-hypr.so /usr/lib/libhx-process.so /usr/lib/libhx-pam.so \
         /usr/share/koya/assets/fonts/SourceSans3-Regular.ttf; do
         [ -r "$needed" ] || die "Koya installation is missing $needed"
     done
@@ -245,8 +243,8 @@ prepare_deployment() {
     as_login mkdir "$release"
     tar -cf "$work/deployment.tar" -C "$source_dir" apps assets native applications install/packages \
         scripts/run-hyprland-shell.sh scripts/run-wifi.sh scripts/run-settings.sh scripts/run-update.sh \
-        install/fix-battery-gauge.sh install/koya-update.initd install/org.koya.Update1.conf install/org.koya.update.policy install/update-worker.sh start-hyprland.sh run.sh \
-        meson.build meson_options.txt hyprland.conf.in session.conf README.md COPYING
+        install/fix-battery-gauge.sh install/koya-update.initd install/org.koya.Update1.conf install/org.koya.update.policy install/org.koya.credential.policy install/koya-lock.pam install/koya-credential.pam install/update-worker.sh start-hyprland.sh run.sh \
+        meson.build meson_options.txt hyprland.conf.in session.conf README.md
     chmod 0644 "$work/deployment.tar"
     as_login tar -xf "$work/deployment.tar" -C "$release"
     # Preserve user policy on reruns, while new settings retain native defaults.
@@ -254,9 +252,12 @@ prepare_deployment() {
         as_login cp "$prefix/current/session.conf" "$release/session.conf"
     fi
     as_login meson setup "$release/build" "$release" -Dintegration_tests=false --buildtype=release
-    as_login meson compile -C "$release/build" koya-session koya-hyprland-display koya-launch-app koya-askpass koya-update-service
-    for binary in koya-session koya-hyprland-display koya-launch-app koya-askpass koya-update-service; do
+    as_login meson compile -C "$release/build"
+    for binary in koya-session koya-hyprland-display koya-launch-app koya-askpass koya-update-service koya-credential-update; do
         [ -x "$release/build/$binary" ] || die "Missing built binary: $binary"
+    done
+    for module in desktop linux-device polkit-agent credentials; do
+        [ -r "$release/build/native/modules/libhx-$module.so" ] || die "Missing built module: $module"
     done
     as_login chmod +x "$release/start-hyprland.sh" "$release/run.sh" \
         "$release/scripts/run-hyprland-shell.sh" "$release/scripts/run-wifi.sh" "$release/scripts/run-settings.sh" "$release/scripts/run-update.sh"
@@ -364,6 +365,12 @@ configure_system() {
     as_root install -d -m 0755 /etc/dbus-1/system.d /usr/share/polkit-1/actions
     # Replace the executable atomically; the active service finishes its own
     # update using its already mapped binary and is not restarted here.
+    as_root install -d -m 0755 /etc/pam.d
+    as_root install -m 0644 "$release/install/koya-lock.pam" /etc/pam.d/koya-lock
+    as_root install -m 0644 "$release/install/koya-credential.pam" /etc/pam.d/koya-credential
+    as_root install -m 0644 "$release/install/org.koya.credential.policy" /usr/share/polkit-1/actions/org.koya.credential.policy
+    as_root install -m 0755 "$release/build/koya-credential-update" /usr/local/libexec/koya-credential-update.new
+    as_root mv /usr/local/libexec/koya-credential-update.new /usr/local/libexec/koya-credential-update
     as_root install -m 0755 "$release/build/koya-update-service" /usr/local/libexec/koya-update-service.new
     as_root mv /usr/local/libexec/koya-update-service.new /usr/local/libexec/koya-update-service
     as_root install -m 0755 "$release/install/koya-update.initd" /etc/init.d/koya-update

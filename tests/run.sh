@@ -15,8 +15,9 @@ if [[ ${1:-} != --inside ]]; then
   exec_path=${KOYA_BIN:-koya}
   KOYA_BIN=$(command -v -- "$exec_path") || { printf 'Koya executable not found: %s\n' "$exec_path" >&2; exit 1; }
   prefix=$(cd -- "$(dirname -- "$KOYA_BIN")/.." && pwd)
+  export KOYA_PHONE_MODULE_DIR=$build/native/testing
   export KOYA_BIN KOYA_PLUGIN_DIR=${KOYA_PLUGIN_DIR:-$prefix/lib} KOYA_ASSET_DIR=${KOYA_ASSET_DIR:-$prefix/share/koya/assets}
-  [[ -f $KOYA_PLUGIN_DIR/libhx-dbus.so && -d $KOYA_ASSET_DIR ]] || { printf 'Set KOYA_PLUGIN_DIR and KOYA_ASSET_DIR for this Koya installation.\n' >&2; exit 1; }
+  [[ -f $KOYA_PLUGIN_DIR/libhx-dbus.so && -f $KOYA_PLUGIN_DIR/libhx-hypr.so && -d $KOYA_ASSET_DIR ]] || { printf 'Set KOYA_PLUGIN_DIR and KOYA_ASSET_DIR for this Koya installation.\n' >&2; exit 1; }
   mkdir -p "$runtime/power/battery" "$runtime/power/usb" "$runtime/bin"
   mkdir -p "$KOYA_TEST_APP_ROOT"
   ln -s "$build" "$KOYA_TEST_APP_ROOT/build"
@@ -31,7 +32,9 @@ if [[ ${1:-} != --inside ]]; then
   dbus-run-session --dbus-daemon="$root/tests/fixtures/dbus-daemon.sh" -- bash "$0" --inside "$test_name"
   exit
 fi
+export GIO_USE_VFS=local
 export DBUS_SYSTEM_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS
+export LD_LIBRARY_PATH=$KOYA_PLUGIN_DIR:${LD_LIBRARY_PATH:-}
 [[ $DBUS_SESSION_BUS_ADDRESS == *"$XDG_RUNTIME_DIR"* ]] || { printf 'Expected a private test bus.\n' >&2; exit 1; }
 pids=()
 cleanup() {
@@ -40,7 +43,11 @@ cleanup() {
 }
 trap cleanup EXIT
 test_name=${2:?}
+if [[ $test_name == system-reconnect ]]; then
+  export DBUS_SYSTEM_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/system-bus
+fi
 export KOYA_TEST_ENTRY=component
+if [[ $test_name == credentials ]]; then export KOYA_TEST_CREDENTIAL_HELPER=$root/tests/fixtures/credential-update.sh; fi
 if [[ $test_name == keyboard || $test_name == hyprland ]]; then
   export HYPRLAND_INSTANCE_SIGNATURE=test KOYA_TEST_IDLE_LOCK_SECONDS=2 KOYA_TEST_IDLE_SCREEN_SECONDS=1
   setsid bash "$root/tests/fixtures/compositor.sh" & pids+=("$!")
@@ -53,7 +60,7 @@ fi
 if [[ $test_name == keyboard ]]; then
   export KOYA_TEST_KEYBOARD_FIXTURE=$root/tests/fixtures/keyboard.sh
 fi
-setsid timeout -k 5 65 "$KOYA_BIN" -n "$KOYA_PLUGIN_DIR" -m "$KOYA_ASSET_DIR" -m "$root" -i "tests/test-$test_name.js" </dev/null >"$XDG_RUNTIME_DIR/test.log" 2>&1 &
+setsid timeout -k 5 65 "$KOYA_BIN" -n "$KOYA_TEST_BUILD/native/modules" -m "$KOYA_ASSET_DIR" -m "$root" -i "tests/test-$test_name.js" </dev/null >"$XDG_RUNTIME_DIR/test.log" 2>&1 &
 pids+=("$!")
 wait "${pids[-1]}" || { cat "$XDG_RUNTIME_DIR/test.log" >&2; exit 1; }
 cat "$XDG_RUNTIME_DIR/test.log"

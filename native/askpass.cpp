@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 #include <gio/gio.h>
 #include <cstdio>
 #include <cstring>

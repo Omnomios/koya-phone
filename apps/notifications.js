@@ -6,6 +6,7 @@ import * as Event from 'Helix/Event';
 import * as Process from 'Module/process';
 import * as Log from 'Helix/Log';
 import { Notifications } from './notifications-model.js';
+import { startNotifications, emitNotification } from './notifications-service.js';
 import { notificationSurface } from './notification-surface.js';
 import { createBrightness } from './brightness.js';
 import { haptic } from './haptics.js';
@@ -48,7 +49,8 @@ export function createNotifications(display, onUnread = () => {}) {
   const brightness = createBrightness(() => requested && unlocked());
   const bannersAllowed = () => unlocked() && state.DesktopView === 'closed' && !requested;
   const emit = (sender, member, id, action, reason) => {
-    call('EmitNotification', 'ssusu', sender, member, id, action, reason).catch(error => Log.error('Notification signal: ' + error));
+    try { emitNotification(Bus, sender, member, id, action, reason); }
+    catch (error) { Log.error('Notification signal: ' + error); }
   };
   const model = new Notifications({ signal: emit, changed: event => {
     if (event.type === 'notify') {
@@ -258,17 +260,7 @@ export function createNotifications(display, onUnread = () => {}) {
   };
   const start = async () => {
     if (connected) return;
-    Bus.onSignal(event => {
-      if (event.interface !== 'org.koya.Shell1' || event.member !== 'NotificationRequest') return;
-      const request = JSON.parse(event.args[0]);
-      let reply;
-      try { reply = model.request(request.Sender, request.Method, request.Arguments); }
-      catch (error) { reply = { Error: String(error.message || error) }; }
-      Bus.callComplex('org.koya.Shell1', '/org/koya/Shell1', 'org.koya.Shell1', 'ReplyNotification', 'ua{sv}', request.Token, reply)
-        .catch(error => Log.error('Notification reply: ' + error));
-    });
-    await Bus.addMatch("type='signal',sender='org.koya.Shell1',interface='org.koya.Shell1',member='NotificationRequest'");
-    await call('RegisterNotifications'); connected = true;
+    await startNotifications(Bus, model); connected = true;
     await brightness.start();
     refreshApps().catch(error => Log.error('Notification icons: ' + error));
   };

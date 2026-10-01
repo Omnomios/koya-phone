@@ -10,6 +10,9 @@ export default run(async () => {
   duplicate = spawn('env', ['XDG_RUNTIME_DIR=' + runtime + '/other', build + '/koya-session-test', root, root + '/tests/fixtures/component.sh']);
   assert(await stopAfterExit(duplicate) !== 0, 'D-Bus singleton');
   await denied(() => call('Ready', 's', 'wallpaper')); await denied(() => call('PowerOff'));
+  await denied(() => call('PlatformState', 'a{sv}', { Active: false }));
+  await denied(() => call('PlatformButton', 'uu', 116, 1));
+  await denied(() => Bus.call('org.koya.Platform1', '/org/koya/Platform1', 'org.koya.Platform1', 'ToggleKeyboard'));
   await key(116, 1); await sleep(100); await key(116, 0); await sleep(1050);
   assert((await state()).PowerMenuState === 'closed', 'Short press opened menu');
   let s = await waitState(s => s.ScreenState === 'off' && s['lock-screenStatus'] === 'ready');
@@ -18,6 +21,12 @@ export default run(async () => {
   await key(116, 0); assert((await state()).ScreenState === 'off', 'Unmatched release woke display');
   await key(116, 1); await key(116, 0); s = await state();
   assert(s.ScreenState === 'locked' && s['lock-screenPid'] === lockPid, 'Wake respawned lock');
+  await denied(() => call('BeginUnlock', 'u', s.LockGeneration));
+  await action('BeginUnlock', 'lock_screen');
+  await denied(() => action('BeginUnlock', 'lock_screen'));
+  await call('Lock');
+  await action('CancelUnlock', 'lock_screen');
+  assert((await state()).ScreenState === 'locked', 'Cancelled unlock lost a queued lock');
   await action('Unlock', 'lock_screen'); await waitState(s => s.ScreenState === 'unlocked' && s['lock-screenPid'] === 0);
   await call('Lock'); await waitState(s => s['lock-screenStatus'] === 'ready');
   assert((await state()).ScreenState === 'locked');
@@ -70,5 +79,10 @@ export default run(async () => {
   }
   s = await state(); pids = ['wallpaper', 'power-menu'].map(n => s[n + 'Pid']);
   await stop(process, 9); await wait(async () => (await Promise.all(pids.map(dead))).every(Boolean));
+  process = coordinator(); s = await waitState(s => s['top-barStatus'] === 'ready' && s.authenticationStatus === 'ready');
+  pids = ['wallpaper', 'top-bar', 'authentication'].map(n => s[n + 'Pid']);
+  await kill(s.platformPid);
+  await wait(() => process.code !== null, 'Platform failure did not stop the shell');
+  await wait(async () => (await Promise.all(pids.map(dead))).every(Boolean), 'UI survived platform failure');
 });
 async function stopAfterExit(child) { await wait(() => child.code !== null, 'Duplicate did not exit'); return child.code; }

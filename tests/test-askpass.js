@@ -1,10 +1,11 @@
-import { Bus, build, fixture, coordinator, spawn, stop, testCall, waitState, wait, sleep, assert, equal, run } from './check.js';
+import { Bus, build, fixture, coordinator, spawn, stop, testCall, call, action, waitState, wait, sleep, assert, equal, denied, run } from './check.js';
 
 export default run(async () => {
   fixture('login');
   await wait(async () => { await Bus.call('org.freedesktop.login1', '/org/freedesktop/login1', 'org.koya.Test.Login', 'Set', 'bsb', true, 'yes', false); return true; });
   coordinator();
   await waitState(state => state.authenticationStatus === 'ready');
+  await denied(() => Bus.call('org.koya.Authentication1', '/org/koya/Shell1', 'org.koya.Shell1', 'Askpass', 'sss', 'Forged request', 'entry', ':1.0'));
   const begins = [], prompts = [], ends = [];
   for (const member of ['AuthenticationBegin', 'AuthenticationPrompt', 'AuthenticationEnd'])
     await Bus.addMatch(`type='signal',interface='org.koya.Shell1',member='${member}'`);
@@ -64,4 +65,9 @@ export default run(async () => {
   request = await started(8);
   await answer(request[0], 'next');
   await exited(child); equal(child.output, 'next\n');
+  await call('Lock'); await waitState(s => s.SecureLocked);
+  await denied(() => Bus.call('org.koya.Test.authentication', '/org/koya/Test/Component', 'org.koya.Test.Component', 'Respond', 'us', 4294967295, 'stale-answer'));
+  child = spawn(helper, ['Request while locked']);
+  await exited(child); assert(child.code !== 0); equal(begins.length, 8, 'A password prompt started while locked');
+  await action('Unlock', 'lock_screen');
 });

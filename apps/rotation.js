@@ -1,15 +1,14 @@
 import { system as Bus } from 'Module/dbus';
-import * as Process from 'Module/process';
+import * as Hypr from 'Module/hypr';
 import * as Log from 'Helix/Log';
 
 const SENSOR = 'net.hadess.SensorProxy', PATH = '/net/hadess/SensorProxy';
 const transforms = { normal: 0, 'left-up': 1, 'bottom-up': 2, 'right-up': 3 };
 const SETTLE_MS = 1000;
-const quote = value => "'" + String(value).replace(/'/g, "'\\''") + "'";
 
 // The top bar owns this subscription in the active graphical session. The
 // sensor proxy handles the device mount matrix and orientation detection.
-export function createRotation(display, { exec = command => Process.exec(command), transition = apply => apply() } = {}) {
+export function createRotation(display, { compositor = Hypr, transition = apply => apply() } = {}) {
   let state = {}, available = false, orientation, owner = false, claimed = false;
   let started = false, closed = false, claimFailed = false, generation = 0, serviceGeneration = 0, timer, target;
   let queue = Promise.resolve();
@@ -47,8 +46,8 @@ export function createRotation(display, { exec = command => Process.exec(command
       enqueue(async () => {
         const valid = () => wanted() && claimed && generation === token && transforms[orientation] === transform;
         if (!valid()) return;
-        const result = await exec('hyprctl -j monitors');
-        const output = JSON.parse(result.stdout).find(value => value.name === display);
+        const monitors = await compositor.monitors();
+        const output = monitors.find(value => value.name === display);
         if (!valid()) return;
         if (!output) throw new Error('Display is unavailable');
         if (output.transform === transform) return;
@@ -58,8 +57,8 @@ export function createRotation(display, { exec = command => Process.exec(command
           output.x + 'x' + output.y, output.scale, 'transform', transform].join(',');
         await transition(async () => {
           if (!valid()) return false;
-          const reply = await exec('hyprctl keyword monitor ' + quote(rule));
-          if (reply.code || reply.exitCode || reply.stdout.trim() !== 'ok') throw new Error('Compositor rejected rotation');
+          const reply = await compositor.send('keyword monitor ' + rule);
+          if (reply.trim() !== 'ok') throw new Error('Compositor rejected rotation');
           return true;
         });
       });
@@ -107,6 +106,7 @@ export function createRotation(display, { exec = command => Process.exec(command
   return {
     start: async () => {
       if (started || closed) return;
+      compositor.connect();
       await Bus.connect(); Bus.onSignal(signal);
       await Bus.addMatch("type='signal',sender='net.hadess.SensorProxy',path='/net/hadess/SensorProxy',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'");
       await Bus.addMatch("type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0='net.hadess.SensorProxy'");

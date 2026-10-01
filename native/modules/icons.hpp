@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: MIT
 #pragma once
 #include <gio/gio.h>
 #include <glib/gstdio.h>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #include <set>
 #include <limits>
@@ -124,7 +125,10 @@ public:
         if (square) {
             fill(square, 0);
             copy(image, 0, 0, width(image), height(image), square, (160-width(image))/2, (160-height(image))/2);
-            std::string temporary = target + ".tmp";
+            std::string temporary = target + ".tmpXXXXXX";
+            int fd = g_mkstemp_full(temporary.data(), O_RDWR | O_CLOEXEC, 0600);
+            if (fd < 0) { g_object_unref(square); g_object_unref(image); return false; }
+            close(fd);
             ok = save(square, temporary.c_str(), "png", nullptr, nullptr, &error) && !g_rename(temporary.c_str(), target.c_str());
             if (!ok) g_unlink(temporary.c_str());
             g_object_unref(square);

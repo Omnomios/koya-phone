@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 #pragma once
 #include <gio/gio.h>
 #include <string>
@@ -29,7 +28,7 @@ inline void merge(GKeyFile *destination) {
     g_clear_error(&error); g_key_file_unref(overrides);
 }
 
-inline bool save(const char *group, const char *key, const char *value, std::string &message) {
+inline bool save(const char *group, const char *key, const char *value, std::string &message, bool durable = false) {
     GKeyFile *config = g_key_file_new();
     GError *error = nullptr;
     bool ok = g_key_file_load_from_file(config, path().c_str(), G_KEY_FILE_KEEP_COMMENTS, &error);
@@ -41,7 +40,9 @@ inline bool save(const char *group, const char *key, const char *value, std::str
     g_key_file_set_value(config, group, key, value);
     gsize length = 0; gchar *data = g_key_file_to_data(config, &length, nullptr);
     ok = g_mkdir_with_parents(directory().c_str(), 0700) == 0;
-    if (ok) ok = g_file_set_contents(path().c_str(), data, length, &error);
+    if (ok) ok = durable ? g_file_set_contents_full(path().c_str(), data, length,
+        static_cast<GFileSetContentsFlags>(G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE), 0600, &error)
+        : g_file_set_contents(path().c_str(), data, length, &error);
     if (!ok) message = error ? error->message : "Cannot create settings directory";
     g_clear_error(&error); g_free(data); g_key_file_unref(config);
     return ok;

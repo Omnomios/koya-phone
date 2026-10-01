@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 #pragma once
 #define POLKIT_AGENT_I_KNOW_API_IS_SUBJECT_TO_CHANGE
 #include <polkitagent/polkitagent.h>
@@ -45,7 +44,7 @@ class AuthenticationAgent {
     guint sender_watch = 0;
     bool stopping = false;
     static constexpr const char *PATH = "/org/koya/Shell1";
-    static constexpr const char *NAME = "org.koya.Shell1";
+    static constexpr const char *NAME = "org.koya.Authentication1";
 
     void signal(const char *name, GVariant *arguments) {
         g_dbus_connection_emit_signal(bus, nullptr, PATH, NAME, name, arguments, nullptr);
@@ -228,7 +227,7 @@ class AuthenticationAgent {
             }), requests.back().get(), nullptr);
         if (requests.front()->id == id) begin();
     }
-    void ask(const char *question, const char *mode, GDBusMethodInvocation *invocation) {
+    void ask(const char *question, const char *mode, GDBusMethodInvocation *invocation, const char *origin = nullptr) {
         if (stopping || !*question || strlen(question) > 2048 ||
             (strcmp(mode, "entry") && strcmp(mode, "confirm") && strcmp(mode, "none"))) {
             g_dbus_method_invocation_return_dbus_error(invocation, "org.koya.Shell1.Error.InvalidRequest",
@@ -239,7 +238,7 @@ class AuthenticationAgent {
         request->owner = this;
         request->id = ++next_id;
         request->askpass = G_DBUS_METHOD_INVOCATION(g_object_ref(invocation));
-        request->sender = g_dbus_method_invocation_get_sender(invocation);
+        request->sender = origin ? origin : g_dbus_method_invocation_get_sender(invocation);
         request->action = std::string("org.koya.Askpass.") + mode;
         request->message = "Authentication requested";
         request->question = question;

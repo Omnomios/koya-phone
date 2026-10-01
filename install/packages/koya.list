@@ -2,4 +2,6 @@
 # https://www.koya-ui.com/repository/alpine
 koya
 helix-plugin-dbus
+helix-plugin-hypr
 helix-plugin-process
+helix-plugin-pam

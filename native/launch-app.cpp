@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 #include <gio/gdesktopappinfo.h>
 #include <fcntl.h>
 #include <unistd.h>

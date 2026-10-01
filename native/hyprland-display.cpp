@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 // Hyprland adapter for the existing coordinator's private display/idle socket.
 // GIO watches descriptors and child exits; no recurring timers or polling loop.
 #include <gio/gio.h>
@@ -151,10 +150,21 @@ public:
             remove(child->killer);
             if (bridge->idle == child) bridge->idle = nullptr;
             bool unexpected = !child->expected && !bridge->stopping;
+            const bool coordinator = child->coordinator;
             bridge->children.erase(std::remove(bridge->children.begin(), bridge->children.end(), child), bridge->children.end());
             g_object_unref(child->process);
             delete child;
-            if (unexpected) { g_warning("Shell child exited unexpectedly"); bridge->stop(1); }
+            if (unexpected) {
+                g_warning("Shell child exited unexpectedly");
+#ifndef KOYA_TESTING
+                // A coordinator can die between releasing the lock and reporting
+                // completion. End its compositor session instead of exposing apps.
+                if (coordinator) { bridge->power(false); bridge->ipc("dispatch exit"); }
+#else
+                (void)coordinator;
+#endif
+                bridge->stop(1);
+            }
             if (bridge->stopping && bridge->children.empty()) g_main_loop_quit(bridge->loop);
         }, child);
         return child;
@@ -188,7 +198,9 @@ public:
         if (client >= 0) close(client);
         client = -1;
         disarm();
+#ifdef KOYA_TESTING
         if (off) power(true);
+#endif
     }
     void request() {
         char packet[64] = {}, response = 'E';

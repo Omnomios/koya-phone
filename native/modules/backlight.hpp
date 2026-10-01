@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 #pragma once
 #include <gio/gio.h>
 #include <algorithm>

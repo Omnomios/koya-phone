@@ -10,8 +10,8 @@ if [[ ${1:-} == --case ]]; then
     mkdir -p "$work/apk/keys"
     printf 'https://example.invalid/alpine\n' >"$work/apk/repositories"
     case "$mode" in
-        pinned) koya_version=9.8.7-r9999;;
-        outdated) koya_version=0.5.3-r890;;
+        pinned) koya_version=0.5.3-r892;;
+        outdated) koya_version=0.5.3-r891;;
         invalid) koya_version=not-a-version;;
         configured) printf 'v3 @koya %s\n' "$KOYA_REPOSITORY" >>"$work/apk/repositories";;
         http) fetch http://example.invalid/key "$work/key"; exit;;
@@ -57,15 +57,15 @@ for mode in latest pinned configured wrong-key bad-signature apk-failure outdate
         grep -q -- '--export 06089A97B6D66C69BFD021F0DF7B60698EF57FF3' "$work_root/$mode/gpg.calls"
         grep -q -- '--verify .*koya-apk.rsa.pub.sig .*koya-apk.rsa.pub' "$work_root/$mode/gpg.calls"
         if [[ "$mode" == pinned ]]; then
-            grep -Fxq 'add --no-cache koya@koya=9.8.7-r9999 helix-plugin-dbus@koya=9.8.7-r9999 helix-plugin-process@koya=9.8.7-r9999' "$work_root/$mode/apk.calls"
+            grep -Fxq 'add --no-cache koya@koya=0.5.3-r892 helix-plugin-dbus@koya=0.5.3-r892 helix-plugin-hypr@koya=0.5.3-r892 helix-plugin-process@koya=0.5.3-r892 helix-plugin-pam@koya=0.5.3-r892' "$work_root/$mode/apk.calls"
         else
-            grep -Fxq 'add --no-cache koya@koya>=0.5.3-r891 helix-plugin-dbus@koya helix-plugin-process@koya' "$work_root/$mode/apk.calls"
+            grep -Fxq 'add --no-cache koya@koya>=0.5.3-r892 helix-plugin-dbus@koya>=0.5.3-r892 helix-plugin-hypr@koya>=0.5.3-r892 helix-plugin-process@koya>=0.5.3-r892 helix-plugin-pam@koya>=0.5.3-r892' "$work_root/$mode/apk.calls"
         fi
     else
         case "$mode" in
             wrong-key) grep -q 'fingerprint does not match' "$work_root/$mode/output";;
             bad-signature) grep -q 'Bad signature: Koya Alpine repository key' "$work_root/$mode/output";;
-            outdated|invalid) grep -q 'build 891 or newer' "$work_root/$mode/output";;
+            outdated|invalid) grep -q 'build 892 or newer' "$work_root/$mode/output";;
             http) grep -q 'URLs must use HTTPS' "$work_root/$mode/output";;
             apk-failure) [[ -s "$work_root/$mode/apk.calls" ]]; continue;;
             *) cat "$work_root/$mode/output" >&2; exit 1;;

@@ -11,7 +11,10 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$KOYA_ENGINE_FIXTURE/calls"
 case "$1" in
     image) [[ "$2" == inspect && -f "$KOYA_ENGINE_FIXTURE/image" ]];;
-    build) touch "$KOYA_ENGINE_FIXTURE/image";;
+    build)
+        context=${!#}
+        [[ -f "$context/install/koya-lock.pam" ]]
+        touch "$KOYA_ENGINE_FIXTURE/image";;
     run) :;;
     *) exit 1;;
 esac

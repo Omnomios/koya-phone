@@ -7,3 +7,5 @@ glib-dev
 libevdev-dev
 eudev-dev
 polkit-dev
+openssl-dev
+linux-pam-dev

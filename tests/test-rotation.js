@@ -12,16 +12,15 @@ export default run(async () => {
     ++transitions;
     if (blockTransition) { const waitFor = blockTransition; blockTransition = undefined; await waitFor; }
     return apply();
-  }, exec: async command => {
-    if (command === 'hyprctl -j monitors') {
+  }, compositor: { connect: () => {}, monitors: async () => {
       ++reads;
       if (blockRead) { const waitFor = blockRead; blockRead = undefined; await waitFor; }
-      return { stdout: JSON.stringify([output]) };
-    }
-    assert(command.startsWith("hyprctl keyword monitor 'DSI-1,1080x2280@60,10x20,2,transform,"), 'Rotation changed the mode, position or scale');
-    output.transform = Number(command.slice(-2, -1)); writes.push(output.transform);
-    return { stdout: 'ok\n' };
-  } });
+      return [{ ...output }];
+    }, send: async command => {
+      assert(command.startsWith('keyword monitor DSI-1,1080x2280@60,10x20,2,transform,'), 'Rotation changed the mode, position or scale');
+      output.transform = Number(command.slice(-1)); writes.push(output.transform);
+      return 'ok\n';
+    } } });
   let state = { Active: true, DisplayOff: false, ScreenState: 'unlocked', AutoRotateEnabled: true };
   const configure = async next => { state = { ...state, ...next }; await rotation.onState(state); };
   const orient = value => control('Orientation', 's', value);
@@ -70,7 +69,7 @@ export default run(async () => {
     assert(!(await counts()).Claimed, 'Denied claim was treated as successful');
     await configure({ AutoRotateEnabled: false }); await control('Reject', 'b', false);
     await configure({ AutoRotateEnabled: true }); await claimed();
-    // A new sensor sample must cancel a stale transform even while hyprctl is
+    // A new sensor sample must cancel a stale transform even while IPC is
     // blocked. Returning to the same position still needs a fresh settle time.
     let unblockSample;
     blockRead = new Promise(resolve => { unblockSample = resolve; });

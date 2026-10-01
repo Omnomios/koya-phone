@@ -10,17 +10,19 @@ ARG DEV_GID=1000
 # Mesa drivers cover Intel/AMD and software Vulkan on typical Linux desktops.
 RUN apk add --no-cache \
     bash coreutils util-linux dbus glib glib-dev build-base meson ninja pkgconf py3-gobject3 \
-    libevdev-dev eudev-dev polkit-dev wayland-dev curl gnupg socat \
+    libevdev-dev eudev-dev polkit-dev openssl-dev linux-pam-dev wayland-dev curl gnupg socat \
     "hyprland=${HYPRLAND_VERSION}" squeekboard \
     gdk-pixbuf librsvg hicolor-icon-theme font-dejavu \
     mesa-dri-gallium mesa-vulkan-intel mesa-vulkan-ati mesa-vulkan-swrast
 
 COPY dev/install-koya-release.sh /opt/koya/install-release.sh
 RUN bash /opt/koya/install-release.sh "${KOYA_VERSION}"
+COPY install/koya-lock.pam /etc/pam.d/koya-lock
 
 RUN group=$(awk -F: -v gid="${DEV_GID}" '$3==gid {print $1; exit}' /etc/group) && \
     if [ -z "$group" ]; then addgroup -g "${DEV_GID}" dev; group=dev; fi && \
-    adduser -D -u "${DEV_UID}" -G "$group" dev
+    adduser -D -u "${DEV_UID}" -G "$group" dev && \
+    printf 'dev:koya\n' | chpasswd
 ENV HOME=/home/dev USER=dev LOGNAME=dev XDG_RUNTIME_DIR=/home/dev/runtime
 USER ${DEV_UID}:${DEV_GID}
 RUN mkdir -m 0700 /home/dev/runtime
