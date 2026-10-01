@@ -1,6 +1,7 @@
 import * as UI from 'Helix/UserInterface';
 import * as Log from 'Helix/Log';
 import * as Credentials from 'Module/credentials';
+import * as PAM from 'Module/pam';
 import { credentialInput } from './credential-input.js';
 import { credentialMode, validPin } from './credential-model.js';
 import { connect, call } from './session.js';
@@ -329,53 +330,80 @@ export default async () => {
     credentialField?.dispose(); credentialField = undefined;
     page.hint = 'Both methods use your Linux account password';
     if (!setup) {
-      await label(win, page.el, 'Choose how you enter your credentials. Setup also changes your Linux account password.', TYPE.body, metric.width, 84, MUTED);
+      await label(win, page.el, 'Use a PIN or password to unlock the phone and approve requests. Changing it also changes your Linux account password.', TYPE.body, metric.width, 84, MUTED);
       for (const mode of ['password', 'pin']) {
         const target = await button(win, page.el, mode === 'pin' ? 'Use a PIN' : 'Use a password', metric.width, 64, () => {
           if (!ok()) return;
           setup = { mode, salt: mode === 'pin' ? Credentials.newSalt() : '', step: 'current', current: '', next: '' };
           go('authentication', 1);
-        }, { colour: CARD }); page.items.push(target);
+        }, { colour: CARD });
+        await UI.setElementId(win, target, 'authentication-use-' + mode); page.items.push(target);
       }
       return page;
     }
     const step = setup.step;
-    page.hint = step === 'current' ? 'Authenticate with your current password or PIN'
-      : step === 'next' ? setup.mode === 'pin' ? 'Choose a PIN of 6 to 12 digits' : 'Choose a password of at least 8 characters'
+    await UI.setElementId(win, page.el, 'authentication-' + step);
+    const transaction = setup;
+    const currentMode = credentialMode(state, state.UserName);
+    const currentName = currentMode === 'pin' ? 'PIN' : 'password';
+    const nextName = setup.mode === 'pin' ? 'PIN' : 'password';
+    if (step === 'done' || step === 'failed') {
+      page.hint = step === 'done' ? 'Authentication updated' : 'Setup stopped';
+      await text(win, page.el, step === 'done' ? (setup.mode === 'pin' ? 'PIN saved' : 'Password saved') : 'Could not save', TYPE.heading, metric.width, 42);
+      await label(win, page.el, step === 'done' ? 'Use your new ' + nextName + ' to unlock the phone and approve authentication requests.' : setup.error,
+        TYPE.body, metric.width, 100, MUTED);
+      page.items.push(await button(win, page.el, 'Done', metric.width, 56, () => ok() && go('home', -1), { colour: ORANGE }));
+      return page;
+    }
+    page.hint = step === 'current' ? 'Confirm your current ' + currentName + ' before choosing a new ' + nextName
+      : step === 'next' ? setup.mode === 'pin' ? 'Choose a PIN of 4 to 12 digits' : 'Choose a password'
       : 'Enter it again to confirm';
-    const heading = step === 'current' ? 'Current credentials' : (step === 'confirm' ? 'Confirm ' : 'New ') + (setup.mode === 'pin' ? 'PIN' : 'password');
+    const heading = step === 'current' ? 'Current ' + currentName : (step === 'confirm' ? 'Confirm ' : 'New ') + nextName;
     await text(win, page.el, heading, TYPE.heading, metric.width, 42);
     const profile = step === 'current' ? state : { UserName: state.UserName, AuthenticationMode: setup.mode, AuthenticationSalt: setup.salt };
     let working = false;
     const advance = async () => {
       if (!ok() || working || !credentialField) return;
-      working = true;
+      working = transaction.busy = true;
+      const field = credentialField;
       try {
         if (step === 'current') {
-          setup.current = await credentialField.answer();
-          if (!setup.current) throw new Error('Enter your current credentials');
-          setup.step = 'next';
+          let current = await field.answer();
+          if (!current) throw new Error('Enter your current ' + currentName);
+          field.clear(); await field.setEnabled(false);
+          const result = await PAM.authenticate({ service: 'koya-lock', user: state.UserName, password: current }).catch(() => ({ ok: false }));
+          if (!ok() || setup !== transaction) { current = ''; return; }
+          if (!result?.ok) { current = ''; throw new Error('Incorrect current ' + currentName); }
+          transaction.current = current; current = '';
+          transaction.step = 'next';
         } else if (step === 'next') {
-          const value = credentialField.value;
-          if (setup.mode === 'pin' ? !validPin(value) : Array.from(value).length < 8) throw new Error('Check the length');
-          setup.next = value; setup.step = 'confirm';
+          const value = field.value;
+          if (transaction.mode === 'pin' ? !validPin(value) : !value) throw new Error(transaction.mode === 'pin' ? 'Enter a PIN of 4 to 12 digits' : 'Enter a password');
+          transaction.next = value; transaction.step = 'confirm';
         } else {
-          if (credentialField.value !== setup.next) throw new Error('The entries do not match');
-          const next = await credentialField.answer();
-          credentialField.clear();
-          await credentialField.setEnabled(false);
-          await call('ConfigureAuthentication', 'ssss', setup.mode, setup.salt, setup.current, next);
-          setup.current = setup.next = ''; setup = undefined;
-          credentialField.dispose(); credentialField = undefined;
-          flash('Authentication updated', ORANGE); go('home', -1); return;
+          if (field.value !== transaction.next) { field.clear(); throw new Error('The entries do not match'); }
+          const next = await field.answer();
+          if (!ok() || setup !== transaction) return;
+          field.clear(); await field.setEnabled(false);
+          try {
+            await call('ConfigureAuthentication', 'ssss', transaction.mode, transaction.salt, transaction.current, next);
+            transaction.step = 'done';
+          } catch (error) {
+            transaction.step = 'failed';
+            transaction.error = (error.message || String(error)).includes('Credentials were not changed')
+              ? 'Your previous ' + currentName + ' still applies. Nothing was changed.'
+              : 'The change could not be confirmed. Check whether your new or previous credentials work before trying again.';
+          }
+          transaction.current = transaction.next = '';
         }
-        credentialField.dispose(); credentialField = undefined;
+        if (!ok() || setup !== transaction) return;
+        field.dispose(); credentialField = undefined;
         go('authentication', 1);
-      } catch (_) { flash(step === 'confirm' ? 'Setup failed. Check the entries and try again.' : 'Check your credentials and try again.', ORANGE); }
-      finally { working = false; if (credentialField && ok()) await credentialField.setEnabled(true); }
+      } catch (error) { if (ok() && setup === transaction) flash(error.message || 'Check your credentials and try again.', ORANGE); }
+      finally { working = transaction.busy = false; if (credentialField === field && ok() && setup === transaction) await field.setEnabled(true); }
     };
     credentialField = await credentialInput(win, page.el, { width: metric.width, profile,
-      mode: step === 'current' ? credentialMode(state, state.UserName) : setup.mode, allowMode: step === 'current',
+      mode: step === 'current' ? currentMode : setup.mode, allowMode: false,
       compact: frame.size.x > frame.size.y, rowHeight: frame.size.x > frame.size.y ? 32 : 48, onSubmit: advance,
       // The keyboard's Enter key carries the step's action, as on the lock screen.
       enterLabel: step === 'confirm' ? 'Save' : 'Continue' });
@@ -391,7 +419,7 @@ export default async () => {
     return frame.go(() => build(target), { title: titleFor(target), direction, back: target !== 'home', dim: !allowed() });
   };
   const back = () => {
-    if (section === 'home' || frame.closing) return;
+    if (section === 'home' || frame.closing || setup?.busy) return;
     return go(section === 'choice' ? choice.section : 'home', -1, section === 'choice' ? choice.page : 0);
   };
 

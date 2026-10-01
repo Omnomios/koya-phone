@@ -588,9 +588,12 @@ class Session {
         if(!active || screen != "unlocked" || stopping || pending || changing_credentials || preparing_sleep) {
             fail(invocation,"Unlock the phone before changing authentication");return;
         }
+        if(!credentials.pending_mode.empty()) {
+            fail(invocation,"An earlier authentication change could not be confirmed");return;
+        }
         if((strcmp(mode,"password") && strcmp(mode,"pin")) || (!strcmp(mode,"pin") && !CredentialSettings::salt_ok(salt)) ||
-           (!strcmp(mode,"password") && *salt) || !*current || strlen(current)>512 || strlen(next)>512 ||
-           strlen(next)<8 || strpbrk(current,"\r\n") || strpbrk(next,"\r\n") || (!strcmp(mode,"pin") && !CredentialSettings::salt_ok(next))) {
+           (!strcmp(mode,"password") && *salt) || !*current || !*next ||
+           strpbrk(current,"\r\n") || strpbrk(next,"\r\n") || (!strcmp(mode,"pin") && !CredentialSettings::salt_ok(next))) {
             fail(invocation,"Invalid password or PIN setup");return;
         }
         std::string error;
@@ -604,17 +607,20 @@ class Session {
         if(const char *test=g_getenv("KOYA_TEST_CREDENTIAL_HELPER")) { command[0]=test;command[1]=nullptr; }
 #endif
         GError *cause=nullptr;GSubprocess *process=g_subprocess_launcher_spawnv(launcher,command,&cause);g_object_unref(launcher);
-        if(!process) { changing_credentials=false;fail(invocation,"Could not start account password setup");g_clear_error(&cause);changed();return; }
+        if(!process) { changing_credentials=false;credentials.discard(error);fail(invocation,"Credentials were not changed");g_clear_error(&cause);changed();return; }
         struct Request { Session *session;GDBusMethodInvocation *invocation; };
         auto *request=new Request{this,G_DBUS_METHOD_INVOCATION(g_object_ref(invocation))};
         std::string input=std::string(current)+"\n"+next+"\n";
         g_subprocess_communicate_utf8_async(process,input.c_str(),nullptr,[](GObject *object,GAsyncResult *result,gpointer data) {
             auto *request=static_cast<Request *>(data);auto *session=request->session;
             gchar *output=nullptr;GError *cause=nullptr;
-            bool ok=g_subprocess_communicate_utf8_finish(G_SUBPROCESS(object),result,&output,nullptr,&cause) && g_subprocess_get_successful(G_SUBPROCESS(object)) && output && !strcmp(output,"changed\n");
+            const bool completed=g_subprocess_communicate_utf8_finish(G_SUBPROCESS(object),result,&output,nullptr,&cause);
+            bool ok=completed && g_subprocess_get_successful(G_SUBPROCESS(object)) && output && !strcmp(output,"changed\n");
+            const bool unchanged=completed && g_subprocess_get_if_exited(G_SUBPROCESS(object)) && g_subprocess_get_exit_status(G_SUBPROCESS(object))==2 && output && !strcmp(output,"unchanged\n");
             session->changing_credentials=false;std::string error;
             if(ok && session->credentials.commit(error)) g_dbus_method_invocation_return_value(request->invocation,nullptr);
-            else fail(request->invocation,ok ? "Account updated; authentication settings need recovery" : "Authentication setup failed; check your current password");
+            else if(unchanged && session->credentials.discard(error)) fail(request->invocation,"Credentials were not changed");
+            else fail(request->invocation,ok ? "Account updated; authentication settings need recovery" : "Could not confirm the account password change");
             // Keep pending parameters if a crash or ambiguous failure changed the account.
             g_clear_error(&cause);g_free(output);g_object_unref(object);g_object_unref(request->invocation);delete request;session->changed();
         },request);

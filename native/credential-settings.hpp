@@ -56,6 +56,13 @@ struct CredentialSettings {
         pending_salt.clear();
         return true;
     }
+    bool discard(std::string &error) {
+        if (!ShellSettings::save("authentication", "pending", "", error, true))
+            return false;
+        pending_mode.clear();
+        pending_salt.clear();
+        return true;
+    }
     void append(GVariantBuilder &b) const {
         for (auto entry : {std::pair{"AuthenticationMode", mode}, std::pair{"AuthenticationSalt", salt},
                            std::pair{"PendingAuthenticationMode", pending_mode},

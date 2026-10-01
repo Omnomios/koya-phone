@@ -124,7 +124,9 @@ export async function credentialInput(win, parent, options) {
     chars = cleanCredential(chars);
     if (mode !== 'password') chars = chars.replace(/\D/g, '');
     if (!chars) return;
-    value = (value + chars).slice(0, mode !== 'password' ? 12 : 512); update(true);
+    value += chars;
+    if (mode !== 'password') value = value.slice(0, 12);
+    update(true);
   };
 
   // ---- Mode switch -------------------------------------------------------

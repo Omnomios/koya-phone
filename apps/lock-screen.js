@@ -50,7 +50,7 @@ export default async () => {
       for (const item of screens.values()) await item.input?.setEnabled(false);
       // A refused answer shakes the field it came from.
       if (!await checking && !ending) input.reject?.();
-    } catch (_) { status('Enter your password or a PIN of 6 to 12 digits'); }
+    } catch (_) { status('Enter your password or a PIN of 4 to 12 digits'); }
     finally { screen.submitting = false; if (!ending) for (const item of screens.values()) await item.input?.setEnabled(item.authenticating && available()); }
   };
   const format = () => {

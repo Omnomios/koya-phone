@@ -55,7 +55,7 @@ static bool readSecret(std::string &out) {
     while (std::cin.get(byte)) {
         if (byte == '\n')
             return true;
-        if (!byte || byte == '\r' || out.size() >= 512)
+        if (!byte || byte == '\r')
             return false;
         out += byte;
     }
@@ -84,10 +84,14 @@ int main(int argc, char **) {
         code = pam_authenticate(handle, PAM_DISALLOW_NULL_AUTHTOK);
     if (code == PAM_SUCCESS)
         code = pam_acct_mgmt(handle, 0);
-    if (code == PAM_SUCCESS) {
-        conversation.changing = true;
-        code = pam_chauthtok(handle, 0);
+    if (code != PAM_SUCCESS) {
+        if (handle)
+            pam_end(handle, code);
+        std::cout << "unchanged\n";
+        return 2;
     }
+    conversation.changing = true;
+    code = pam_chauthtok(handle, 0);
     if (handle)
         pam_end(handle, code);
     // Never expose tokens or PAM's conversation text to logs or stdout.
@@ -96,5 +100,5 @@ int main(int argc, char **) {
         return 0;
     }
     std::cout << "denied\n";
-    return 2;
+    return 3;
 }

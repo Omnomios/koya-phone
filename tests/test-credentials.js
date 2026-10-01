@@ -4,13 +4,15 @@ import { Bus, fixture, coordinator, stop, call, state, waitState, wait, action, 
 import { credentialAnswer, credentialMode } from '../apps/credential-model.js';
 export default run(async () => {
   const salt = '01'.repeat(32);
-  const derived = await Credentials.derivePin('123456', salt);
-  equal(derived, '1452519cd397f4d94922088339fd895c0939e5dd612cdb136575203ab28cf2f3', 'PIN derivation differs from PBKDF2 reference');
+  const derived = await Credentials.derivePin('1234', salt);
+  equal(derived, 'bed638eed61e16132f1826b4e22022987311002b83339655b157100fdde377e5', 'PIN derivation differs from PBKDF2 reference');
   assert(/^[a-f0-9]{64}$/.test(Credentials.newSalt()), 'Salt was not securely generated');
   await denied(() => Credentials.derivePin('123', salt));
   await denied(() => Credentials.derivePin('123456\0ignored', salt));
   const invalid = await denied(() => PAM.authenticate({ service: 'koya-lock', user: 'fixture', password: 'secret\0ignored' }));
   assert(String(invalid).includes('invalid'), 'PAM did not reject an embedded NUL before authentication');
+  const longResult = await denied(() => PAM.authenticate({ service: 'koya-test-no-such-service', user: 'koya-test-no-such-user', password: 'p'.repeat(1024) }));
+  assert(longResult.ok === false && typeof longResult.pamCode === 'number', 'A long password was rejected before reaching PAM');
   fixture('login');
   let process = coordinator();
   await waitState(s => s.Active && s['top-barStatus'] === 'ready');
@@ -22,7 +24,7 @@ export default run(async () => {
   let profile = await state();
   equal(profile.AuthenticationMode, 'pin'); equal(profile.AuthenticationSalt, salt); equal(profile.PendingAuthenticationMode, '');
   equal(credentialMode(profile, profile.UserName), 'pin');
-  equal(await credentialAnswer('123456', 'pin', profile, Credentials.derivePin), derived, 'Shared account prompt did not derive the PAM password');
+  equal(await credentialAnswer('1234', 'pin', profile, Credentials.derivePin), derived, 'Shared account prompt did not derive the PAM password');
   await call('Lock'); await waitState(s => s.SecureLocked);
   await denied(() => call('ConfigureAuthentication', 'ssss', 'password', '', 'fixture-current', 'next-password'));
   await action('Unlock', 'lock_screen'); await waitState(s => s.ScreenState === 'unlocked');
@@ -30,8 +32,17 @@ export default run(async () => {
   profile = await waitState(s => s.Active && s['top-barStatus'] === 'ready');
   equal(profile.AuthenticationMode, 'pin'); equal(profile.AuthenticationSalt, salt, 'PIN settings did not survive a release restart');
   await denied(() => call('ConfigureAuthentication', 'ssss', 'password', '', 'wrong-current', 'next-password'));
-  profile = await state(); equal(profile.AuthenticationMode, 'pin'); equal(profile.PendingAuthenticationMode, 'password');
-  await call('ConfigureAuthentication', 'ssss', 'password', '', 'fixture-current', 'next-password');
+  profile = await state(); equal(profile.AuthenticationMode, 'pin'); equal(profile.PendingAuthenticationMode, '');
+  await stop(process); process = coordinator();
+  profile = await waitState(s => s.Active && s['top-barStatus'] === 'ready');
+  equal(profile.AuthenticationMode, 'pin'); equal(profile.PendingAuthenticationMode, '', 'A rejected change left a pending credential after restart');
+  await call('ConfigureAuthentication', 'ssss', 'password', '', 'fixture-current', 'x');
   profile = await state(); equal(profile.AuthenticationMode, 'password'); equal(profile.AuthenticationSalt, ''); equal(profile.PendingAuthenticationMode, '');
+  await call('ConfigureAuthentication', 'ssss', 'password', '', 'fixture-long-current-' + 'x'.repeat(1024), 'long password '.repeat(100));
+  await denied(() => call('ConfigureAuthentication', 'ssss', 'pin', salt, 'wrong-current', derived));
+  profile = await state(); equal(profile.AuthenticationMode, 'password'); equal(profile.PendingAuthenticationMode, '');
+  await denied(() => call('ConfigureAuthentication', 'ssss', 'password', '', 'fixture-current', 'fixture-ambiguous'));
+  await denied(() => call('ConfigureAuthentication', 'ssss', 'pin', salt, 'fixture-current', derived));
+  profile = await state(); equal(profile.AuthenticationMode, 'password'); equal(profile.PendingAuthenticationMode, 'password', 'An ambiguous change lost its pending parameters');
   await stop(process);
 });

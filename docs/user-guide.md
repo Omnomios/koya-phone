@@ -31,8 +31,10 @@ The phone starts locked. Press the power button to wake it, swipe the clock
 screen up, then enter your Linux account password. Tap **Cancel** to return to
 the clock screen. Switching the screen off clears the input and restores the
 clock screen when you wake it. In **Settings → Password & PIN**, choose a password
-(at least 8 characters) or a PIN (6 to 12 digits), authenticate with your current
-credentials, and enter the new value twice.
+or a PIN (4 to 12 digits), authenticate with your current
+credentials, and enter the new value twice. Setup checks your current credentials
+first, then confirms when the change has been saved. Use the new password or PIN
+for unlocking and authentication requests.
 
 PIN setup derives a longer password and makes it your Linux account password;
 it does not create a separate phone credential. Koya derives it again when you

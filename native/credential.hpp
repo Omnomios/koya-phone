@@ -9,7 +9,7 @@
 namespace Credential {
 constexpr int iterations = 600000;
 inline bool pin(const std::string &value) {
-    return value.size() >= 6 && value.size() <= 12 &&
+    return value.size() >= 4 && value.size() <= 12 &&
            std::all_of(value.begin(), value.end(), [](char c) { return c >= '0' && c <= '9'; });
 }
 inline bool salt(const std::string &value) {
@@ -35,7 +35,7 @@ inline std::string newSalt() {
 }
 inline std::string derive(const std::string &value, const std::string &saltValue) {
     if (!pin(value) || !salt(saltValue))
-        throw std::runtime_error("Use a PIN of 6 to 12 digits");
+        throw std::runtime_error("Use a PIN of 4 to 12 digits");
     unsigned char bytes[32];
     const std::string domain = "koya-pin-v1:" + saltValue;
     if (PKCS5_PBKDF2_HMAC(value.data(), value.size(), reinterpret_cast<const unsigned char *>(domain.data()),

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { credentialAnswer, credentialMode, validPin } from '../apps/credential-model.js';
+import { cleanCredential, credentialAnswer, credentialMode, validPin } from '../apps/credential-model.js';
 import { lockController } from '../apps/lock-controller.js';
 import { swipeGesture } from '../apps/swipe.js';
 for (const height of [540, 1140]) {
@@ -17,11 +17,16 @@ const profile = { UserName: 'phone', AuthenticationMode: 'pin', AuthenticationSa
 assert.equal(credentialMode(profile, 'phone'), 'pin');
 assert.equal(credentialMode(profile, 'root'), 'password');
 assert.equal(credentialMode(profile, 'phone', true), 'password');
-assert(!validPin('12345')); assert(validPin('123456')); assert(!validPin('123456x'));
+assert(!validPin('123')); assert(validPin('1234')); assert(validPin('12345')); assert(validPin('123456789012'));
+assert(!validPin('1234567890123')); assert(!validPin('1234x'));
+const longPassword = 'long password 🔑 '.repeat(100);
+assert.equal(cleanCredential(longPassword), longPassword, 'A long password was truncated');
+assert.equal(await credentialAnswer('x', 'password', profile, () => { throw Error('PIN derivation called for a password'); }), 'x');
+assert.equal(await credentialAnswer(longPassword, 'password', profile, () => { throw Error('PIN derivation called for a password'); }), longPassword);
 assert.equal(await credentialAnswer('secret', 'password', profile, () => { throw Error('PIN derivation called for a password'); }), 'secret');
 const salt = async (_, salt) => salt;
-assert.equal(await credentialAnswer('123456', 'pin', profile, salt), profile.AuthenticationSalt);
-assert.equal(await credentialAnswer('123456', 'pin-pending', profile, salt), profile.PendingAuthenticationSalt);
+assert.equal(await credentialAnswer('1234', 'pin', profile, salt), profile.AuthenticationSalt);
+assert.equal(await credentialAnswer('1234', 'pin-pending', profile, salt), profile.PendingAuthenticationSalt);
 await assert.rejects(credentialAnswer('123', 'pin', profile, salt));
 const locked = { Active: true, ScreenState: 'locked', SecureLocked: true, UserName: 'phone', LockGeneration: 1 };
 let authenticated, unlocks = [], now = 0, pending;

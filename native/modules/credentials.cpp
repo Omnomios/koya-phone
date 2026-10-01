@@ -33,7 +33,7 @@ struct Credentials : NativeModule {
             std::string pin = credential(base->js, argv[0]), salt = credential(base->js, argv[1]);
             if (!Credential::pin(pin) || !Credential::salt(salt)) {
                 Credential::erase(pin);
-                return JS_ThrowTypeError(base->js, "Use a PIN of 6 to 12 digits");
+                return JS_ThrowTypeError(base->js, "Use a PIN of 4 to 12 digits");
             }
             JSValue funcs[2];
             JSValue promise = JS_NewPromiseCapability(base->js, funcs);

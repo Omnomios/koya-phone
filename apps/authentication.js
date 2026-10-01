@@ -6,6 +6,7 @@ import * as Log from 'Helix/Log';
 import { session as Bus } from 'Module/dbus';
 import { credentialInput, credentialKeyboardHeight } from './credential-input.js';
 import { credentialMode } from './credential-model.js';
+import { configureHaptics } from './haptics.js';
 import { button, label, text } from './touch-ui.js';
 import { CREAM, ORANGE, INK, CARD, MUTED, CLEAR, GUTTER, SPACE, RADIUS, TYPE, TOUCH } from './theme.js';
 
@@ -89,6 +90,9 @@ export default async () => {
   };
   const begin = async (id, action, message, user) => {
     await hide(); profile = await call('GetState');
+    // This dialog has its own bus connection rather than session.connect(),
+    // so it hands the shell state to haptics itself; keys stay silent otherwise.
+    configureHaptics(profile);
     if (!profile.Active || profile.ScreenState !== 'unlocked') { await call('AuthenticationCancel', 'u', id); return; }
     const mode = action.startsWith('org.koya.Askpass.') ? action.slice('org.koya.Askpass.'.length) : 'entry';
     active = { id, action, mode, noInput: mode === 'confirm' || mode === 'none', message: clean(message) || 'Administrator access is required', user: clean(user), question: '', status: '' };
@@ -120,6 +124,7 @@ export default async () => {
             active.status = clean(first); await UI.setTextString(win, statusLabel, active.status);
           });
           if (event.member === 'AuthenticationEnd') enqueue(() => active?.id === id ? hide() : undefined);
+          if (event.member === 'StateChanged' && id && typeof id === 'object') configureHaptics(id);
           if (event.member === 'StateChanged' && active && (id.ScreenState !== 'unlocked' || !id.Active)) enqueue(async () => { cancel(); await hide(); });
         }
         if (event.interface === 'org.freedesktop.DBus' && event.member === 'NameOwnerChanged' && event.args?.[0] === NAME && !event.args[2]) Engine.quit();
