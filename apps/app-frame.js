@@ -307,7 +307,8 @@ export async function appFrame({ title: initialTitle, appId, name = initialTitle
   await Compositor.setWindowRenderingEnabled(win, true);
 
   return {
-    win, size, wall,
+    // `root` is layout-less and covers the window: pages can dock to it.
+    win, size, wall, root,
     get width() { return metrics().width; }, get stageHeight() { return metrics().stageHeight; },
     get current() { return current; }, get closing() { return closing; }, get settled() { return queue; },
     play, hidden, punch, shake, rise, host, enqueue,

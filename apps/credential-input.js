@@ -156,7 +156,8 @@ export async function credentialInput(win, parent, options) {
   const trayMotion = await clips(win, tray, {
     enter: [{ time: 0, position: { x: 0, y: trayHeight }, opacity: 1 }, { time: 0.3, position: { x: 0, y: 0 }, opacity: 1, ease: 'outCubic' }],
     show: [{ time: 0.22, position: { x: 0, y: 0 }, opacity: 1, ease: 'outCubic' }],
-    hide: [{ time: 0.18, position: { x: 0, y: trayHeight * 0.4 }, opacity: 0.35, ease: 'inQuad' }]
+    hide: [{ time: 0.18, position: { x: 0, y: trayHeight * 0.4 }, opacity: 0.35, ease: 'inQuad' }],
+    leave: [{ time: 0.2, position: { x: 0, y: trayHeight }, ease: 'inQuad' }]
   });
   let keys, bubble, bubbleText, letterLabels = [], shiftLabel;
   const unit = (trayWidth - 2 * metrics.side - 9 * metrics.keyGap) / 10;
@@ -299,7 +300,8 @@ export async function credentialInput(win, parent, options) {
     },
     dispose() {
       disposed = true; value = ''; input.focused = false; input.enabled = false; stopRepeat(); fields.delete(input);
-      if (docked) UI.destroyElement(win, tray).catch(() => {});
+      // A docked tray slides off the bottom edge before it is removed.
+      if (docked) trayMotion.play('leave').catch(() => {}).finally(() => setTimeout(() => UI.destroyElement(win, tray).catch(() => {}), 220));
     }
   };
   fields.add(input);

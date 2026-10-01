@@ -403,8 +403,10 @@ export default async () => {
       finally { working = transaction.busy = false; if (credentialField === field && ok() && setup === transaction) await field.setEnabled(true); }
     };
     credentialField = await credentialInput(win, page.el, { width: metric.width, profile,
-      mode: step === 'current' ? currentMode : setup.mode, allowMode: false,
-      compact: frame.size.x > frame.size.y, rowHeight: frame.size.x > frame.size.y ? 32 : 48, onSubmit: advance,
+      mode: step === 'current' ? currentMode : setup.mode, allowMode: false, onSubmit: advance,
+      // Docked to the window's bottom edge like a system keyboard, as on the
+      // lock screen; the field stays at the top of the page.
+      dock: { parent: frame.root, size: { ...frame.size } },
       // The keyboard's Enter key carries the step's action, as on the lock screen.
       enterLabel: step === 'confirm' ? 'Save' : 'Continue' });
     page.items.push(credentialField.root); return page;
