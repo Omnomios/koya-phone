@@ -12,6 +12,7 @@ import { createBrightness } from './brightness.js';
 import { haptic } from './haptics.js';
 import { button, icon, text, label, row, pill, backdrop, sheetHeader } from './touch-ui.js';
 import { clips } from './motion.js';
+import { pressFeedback } from './press-feedback.js';
 import { call } from './session.js';
 import { decodeDesktop, nextDesktop } from './desktop-model.js';
 import { CREAM, ORANGE, INK, CARD, MUTED, CLEAR, alpha, BAR_HEIGHT, GUTTER, SPACE, RADIUS, TYPE, HEADER_HEIGHT, TOUCH, TRAILING_INSET } from './theme.js';
@@ -97,17 +98,20 @@ export function createNotifications(display, onUnread = () => {}) {
       renderable: { type: 'box', colour: compact ? CLEAR : CARD, cornerRadius: RADIUS.surface, cornerResolution: 16, origin: { x: 0.5, y: 0.5 } },
       layout: { type: 'column', gap: SPACE.xs, padding: { l: CARD_PAD, r: TRAILING_INSET - 20, t: CARD_PAD, b: CARD_PAD } },
       item: { size: { x: w, y: height } }, inheritAnimation: true, contentAlign: 'fill',
-      onMouseDown: (_, point) => { if (inText(point) && unlocked()) { haptic(); motion?.play('press'); } },
-      onMouseUp: () => motion?.play('release'),
-      onMouseExit: () => motion?.play('release'),
-      onMouseClick: (_, point) => { if (inText(point) && unlocked()) activate(item); }
+      onPress: pressFeedback({
+        start: event => { if (inText(event.local) && unlocked()) { haptic(); motion?.play('press'); } },
+        release: () => motion?.play('release'),
+        cancel: () => motion?.play('settle')
+      }),
+      onActivate: event => { if (inText(event.local) && unlocked()) activate(item); }
     });
     await UI.attach(win, parent, node);
     await UI.setElementId(win, node, 'notification-' + item.id);
     motion = await clips(win, node, {
       press: [{ time: 0.07, scale: { x: 0.98, y: 0.98 }, ease: 'outQuad' }],
       release: [{ time: 0.10, scale: { x: 1.008, y: 1.008 }, ease: 'outCubic' },
-        { time: 0.23, scale: { x: 1, y: 1 }, ease: 'outCubic' }]
+        { time: 0.23, scale: { x: 1, y: 1 }, ease: 'outCubic' }],
+      settle: [{ time: 0.14, scale: { x: 1, y: 1 }, ease: 'outCubic' }]
     });
     const inner = w - CARD_PAD - (TRAILING_INSET - 20), text = w - 2 * CARD_PAD;
     const header = await UI.createElement(win, { layout: { type: 'row', gap: SPACE.s, alignItems: 'center' }, item: { size: { x: inner, y: CARD_HEADER } } });

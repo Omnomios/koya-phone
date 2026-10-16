@@ -93,7 +93,7 @@ export async function credentialInput(win, parent, options) {
   const entry = await UI.createElement(win, {
     renderable: { type: 'box', colour: CARD, cornerRadius: RADIUS.control, cornerResolution: 16, origin: { x: 0.5, y: 0.5 } },
     item: { size: { x: entryWidth, y: FIELD } }, contentAlign: 'fill', inheritAnimation: true,
-    onMouseDown: () => input.focus() });
+    onActivate: () => input.focus() });
   await UI.attach(win, entryHost, entry);
   await UI.setElementId(win, entry, options.id || 'credential-response');
   const ring = await UI.createElement(win, { renderable: { type: 'box', colour: ORANGE, inset: 2, cornerRadius: RADIUS.control, cornerResolution: 16,

@@ -8,6 +8,7 @@ import { windowLayout } from './window-layout.js';
 import { haptic } from './haptics.js';
 import { text as textElement, label as labelElement } from './touch-ui.js';
 import { CREAM, INK, MUTED, DISABLED, CARD_PRESSED, GUTTER, SPACE, RADIUS, TYPE } from './theme.js';
+import { pressFeedback } from './press-feedback.js';
 const ACTIONS = [
   { label: 'Power off', icon: 'power-off', method: 'PowerOff', capability: 'CanPowerOff', pending: 'Powering off…' },
   { label: 'Restart', icon: 'restart', method: 'Reboot', capability: 'CanReboot', pending: 'Restarting…' },
@@ -15,7 +16,7 @@ const ACTIONS = [
 ];
 
 export default async () => {
-  const displays = await Compositor.listDisplays();
+  const displays = await Compositor.listDisplays({ backend: 'wayland' });
   const display = displays[0];
   if (!display) throw new Error('No display available');
   const win = await Compositor.createWindow({
@@ -70,7 +71,7 @@ export default async () => {
     : textElement(win, parent, value, size, width, height, colour);
   const click = async (element, handler) => {
     await UI.setHitTarget(win, element, true);
-    await UI.setOnMouseClick(win, element, handler);
+    await UI.setOnActivate(win, element, handler);
   };
   let closeSent = false;
   const finishDismiss = async () => {
@@ -205,22 +206,24 @@ export default async () => {
         await activate(index);
         await paint();
       });
-      await UI.setOnMouseDown(win, moving, async () => {
-        if (!available(index)) return;
-        haptic();
-        keyboardFocus = false;
-        pressed = index;
-        await motion.play('press');
-        await paint();
-      });
       const release = async (cancel = false) => {
         if (pressed !== index) return;
         pressed = -1;
         if (!closing) await motion.play(cancel ? 'settle' : 'release');
         await paint();
       };
-      await UI.setOnMouseUp(win, moving, () => release());
-      await UI.setOnMouseExit(win, moving, () => release(true));
+      await UI.setOnPress(win, moving, pressFeedback({
+        start: async () => {
+          if (!available(index)) return;
+          haptic();
+          keyboardFocus = false;
+          pressed = index;
+          await motion.play('press');
+          await paint();
+        },
+        release: () => release(),
+        cancel: () => release(true)
+      }));
     }
     status = await text(root, messageText, TYPE.caption, groupWidth, 32, MUTED);
     statusMotion = await clips(win, status, {

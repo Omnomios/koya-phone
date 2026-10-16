@@ -263,7 +263,7 @@ export default async (options = {}) => {
     entry = await UI.createElement(win, {
       renderable: { type: 'box', colour: CARD, cornerRadius: RADIUS.control, cornerResolution: 16, origin: { x: 0.5, y: 0.5 } },
       item: { size: { x: width, y: 72 } }, contentAlign: 'fill', inheritAnimation: true,
-      onMouseDown: () => frame.enqueue(focusField)
+      onActivate: () => frame.enqueue(focusField)
     });
     await UI.attach(win, page.el, entry); await UI.setElementId(win, entry, 'wifi-password');
     focusRing = await UI.createElement(win, {

@@ -50,7 +50,7 @@ export default async () => {
         await pause(250); await app.settled();
         const layersAfter = (await Process.exec('hyprctl -j layers')).stdout;
         assert(!layersAfter.includes('koya-rotation-transition'), 'Rotation transition remained on screen');
-        const displays = await Compositor.listDisplays(), size = displays[0];
+        const displays = await Compositor.listDisplays({ backend: 'wayland' }), size = displays[0];
         const width = Number(size.logical_width), height = Number(size.logical_height);
         const info = await Compositor.getWindowInfo(win);
         assert(info.width === width && info.height === height - BAR_HEIGHT - NAV_HEIGHT, 'Sensor rotation left stale Settings geometry');

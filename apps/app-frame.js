@@ -17,7 +17,7 @@ export const glyph = name => '/rom/assets/launcher/' + name + '.png';
 export const STATUS = 32;
 
 export async function appFrame({ title: initialTitle, appId, name = initialTitle, hint = () => '', onBack, onClose }) {
-  const display = (await Compositor.listDisplays())[0];
+  const display = (await Compositor.listDisplays({ backend: 'wayland' }))[0];
   if (!display) throw new Error('No display available');
   const requested = { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) - BAR_HEIGHT - NAV_HEIGHT };
   const win = await Compositor.createWindow({ role: 'window', title: initialTitle, appId,

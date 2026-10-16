@@ -5,7 +5,7 @@ import { wallpaperSurface, resizeWallpaper } from './wallpaper-surface.js';
 import { windowLayout } from './window-layout.js';
 
 export default async () => {
-  const displays = await Compositor.listDisplays();
+  const displays = await Compositor.listDisplays({ backend: 'wayland' });
   const win = await Compositor.createWindow({
     role: 'background', display: displays.length ? displays[0].display : '',
     exclusiveZone: -1, namespace: 'koya-background', msaaSamples: 1,

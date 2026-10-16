@@ -120,6 +120,7 @@ touch "$layout/lib/libhx-dbus.so" "$layout/lib/libhx-hypr.so" "$layout/lib/libhx
 touch "$layout/share/koya/assets/fonts/SourceSans3-Regular.ttf"
 cat >"$layout/bin/koya" <<'STUB'
 #!/usr/bin/env bash
+if [[ ${1:-} == --version ]]; then printf 'Koya %s (test fixture)\n' "${KOYA_DEV_FIXTURE_VERSION:-0.6.0}"; exit; fi
 exec "$KOYA_DEV_FIXTURE" --koya "$@"
 STUB
 cat >"$test_dir/nested-Hyprland" <<'STUB'
@@ -134,6 +135,9 @@ until [[ -S "$test_dir/parent-wayland" ]]; do (( SECONDS < deadline )) || exit 1
 export WAYLAND_DISPLAY=$test_dir/parent-wayland
 export PATH="$layout/bin:$PATH"
 unset KOYA_BIN
+if KOYA_DEV_FIXTURE_VERSION=0.5.99 bash "$root/dev/session.sh" --hyprland "$test_dir/nested-Hyprland" \
+    --build-dir "$build" --no-build >"$test_dir/old-koya.log" 2>&1; then exit 1; fi
+grep -q 'Koya 0.6.0 or newer is required' "$test_dir/old-koya.log"
 setsid bash "$root/dev/session.sh" --hyprland "$test_dir/nested-Hyprland" \
     --build-dir "$build" --no-build >"$test_dir/nested.log" 2>&1 &
 launcher_pid=$!

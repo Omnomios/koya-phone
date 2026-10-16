@@ -9,7 +9,7 @@ import { createDrawerController } from './desktop-view.js';
 
 
 export default async () => {
-  const display = (await Compositor.listDisplays())[0];
+  const display = (await Compositor.listDisplays({ backend: 'wayland' }))[0];
   const win = await Compositor.createWindow({
     role: 'bar', edge: 'bottom', thickness: NAV_HEIGHT, reserveSpace: true,
     display: display.display, namespace: 'koya-navigation', msaaSamples: 1,

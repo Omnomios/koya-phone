@@ -84,40 +84,47 @@ export default async () => {
     const gesture = screen.gesture = swipeGesture(size.y), epoch = screen.epoch;
     const live = () => screen.epoch === epoch && !screen.authenticating && !screen.transitioning && available();
     const hint = () => nudge.play('hint').catch(() => {});
-    let distance = null, queued = false;
+    let distance = null, queued = false, interaction;
     const settle = () => {
-      gesture.cancel(); distance = null;
+      gesture.cancel(); distance = null; interaction = undefined;
       if (live()) serialize(() => screen.epoch === epoch && motion.play('settle'));
     };
     const target = await UI.createElement(win, {
       item: { size },
-      onMouseDown: point => { if (live()) gesture.down({ x: point.x, y: point.y }); },
-      onMouseMove: point => {
-        if (!live()) return;
-        distance = gesture.move(point);
-        if (distance === null || queued) return;
-        queued = true;
-        serialize(async () => {
-          try {
-            while (distance !== null && live()) { const latest = distance; distance = null; await motion.drag(latest); }
-          } finally { queued = false; }
-        });
+      inputOptions: { dragAxis: 'y' },
+      onDrag: event => {
+        if (!live()) { settle(); return; }
+        if (event.phase === 'start' && interaction === undefined) {
+          interaction = event.interactionId;
+          gesture.down(event.start);
+        }
+        if (event.interactionId !== interaction) return;
+        if (event.phase === 'cancel') { settle(); return; }
+        if (event.phase === 'end') {
+          const travel = gesture.move(event.position);
+          interaction = undefined;
+          if (!gesture.up(event.position)) { settle(); hint(); return; }
+          screen.transitioning = true; distance = null;
+          serialize(async () => {
+            if (screen.epoch !== epoch || !available()) return;
+            await motion.leave(travel);
+            await new Promise(resolve => setTimeout(resolve, 250));
+            if (screen.epoch !== epoch || !available()) return;
+            screen.authenticating = true;
+            await build(screen);
+          }).catch(() => {});
+        } else {
+          distance = gesture.move(event.position);
+          if (distance === null || queued) return;
+          queued = true;
+          serialize(async () => {
+            try {
+              while (distance !== null && live()) { const latest = distance; distance = null; await motion.drag(latest); }
+            } finally { queued = false; }
+          });
+        }
       },
-      onMouseUp: point => {
-        if (!live()) return;
-        const travel = gesture.move(point);
-        if (!gesture.up(point)) { settle(); hint(); return; }
-        screen.transitioning = true; distance = null;
-        serialize(async () => {
-          if (screen.epoch !== epoch || !available()) return;
-          await motion.leave(travel);
-          await new Promise(resolve => setTimeout(resolve, 250));
-          if (screen.epoch !== epoch || !available()) return;
-          screen.authenticating = true;
-          await build(screen);
-        }).catch(() => {});
-      },
-      onMouseExit: settle
+      onActivate: hint
     });
     await UI.attach(win, screen.root, target);
     await UI.setElementId(win, target, 'lock-swipe');
@@ -196,7 +203,7 @@ export default async () => {
     }));
     return screen;
   };
-  const displays = await Compositor.listDisplays();
+  const displays = await Compositor.listDisplays({ backend: 'wayland' });
   if (!displays.length) throw new Error('No lock display available');
   for (const display of displays) await add(display);
   const confirmed = async () => {
@@ -226,7 +233,7 @@ export default async () => {
       if (previous !== state.LockGeneration && previous !== undefined && await Compositor.sessionLockState() === 'unlocked') {
         for (const screen of screens.values()) { screen.input?.dispose(); await Compositor.destroyWindow(screen.win); }
         screens.clear();
-        for (const display of await Compositor.listDisplays()) await add(display);
+        for (const display of await Compositor.listDisplays({ backend: 'wayland' })) await add(display);
         await confirmed(); await call('Ready', 's', 'lock-screen');
       }
       previous = state.LockGeneration;
@@ -243,7 +250,7 @@ export default async () => {
     try {
       if (await Compositor.sessionLockState() === 'finished') { controller.cancel(); Engine.quit(); return; }
       await serialize(async () => {
-        const displays = await Compositor.listDisplays(), available = new Set(displays.map(display => display.display));
+        const displays = await Compositor.listDisplays({ backend: 'wayland' }), available = new Set(displays.map(display => display.display));
         for (const [id, screen] of screens) if (!available.has(id)) {
           screen.input?.dispose(); await Compositor.destroyWindow(screen.win); screens.delete(id);
         }

@@ -3,6 +3,7 @@ import { FONT, FONT_STRONG, CREAM, CLEAR, CARD, TONAL, TRACK, ORANGE, SHEET_TINT
 import { clips } from './motion.js';
 import { haptic } from './haptics.js';
 import { wallpaperSurface } from './wallpaper-surface.js';
+import { pressFeedback } from './press-feedback.js';
 
 // contentAlign places the text's bounds in its slot. With the default 'ink'
 // basis those bounds are the tight glyph box, which changes with every string
@@ -50,10 +51,12 @@ export async function button(win, parent, label, width, height, handler, options
     layout: { type: 'column', justifyContent: 'center', alignItems: 'center', gap: options.gap ?? 8 },
     item: { size: { x: width, y: height } }, contentAlign: 'fill', inheritAnimation: true,
     // onPress/onRelease let callers add secondary feedback (a key preview).
-    onMouseDown: () => { haptic(); if (!waiting) motion?.play('press'); options.onPress?.(); },
-    onMouseUp: () => { if (!waiting) motion?.play('release'); options.onRelease?.(); },
-    onMouseExit: () => { if (!waiting) motion?.play('settle'); options.onRelease?.(); },
-    onMouseClick: handler
+    onPress: pressFeedback({
+      start: () => { haptic(); if (!waiting) motion?.play('press'); options.onPress?.(); },
+      release: () => { if (!waiting) motion?.play('release'); options.onRelease?.(); },
+      cancel: () => { if (!waiting) motion?.play('settle'); options.onRelease?.(); }
+    }),
+    onActivate: handler
   });
   await UI.attach(win, parent, id);
   const pose = scale => ({ scale: { x: scale, y: scale } });
@@ -125,10 +128,12 @@ export async function row(win, parent, width, height, handler, options = {}) {
     renderable: { type: 'box', colour: options.colour || CARD, cornerRadius: options.radius ?? RADIUS.surface, cornerResolution: 16, origin: { x: 0.5, y: 0.5 } },
     layout: { type: 'row', alignItems: 'center', gap: options.gap ?? 12, padding: { l: 16, r: options.right ?? 12, t: 0, b: 0 } },
     item: { size: { x: width, y: height } }, contentAlign: 'fill', inheritAnimation: true,
-    onMouseDown: () => { haptic(); motion?.play('press'); options.onPress?.(); },
-    onMouseUp: () => { motion?.play('release'); options.onRelease?.(); },
-    onMouseExit: () => { motion?.play('release'); options.onRelease?.(); },
-    onMouseClick: handler
+    onPress: pressFeedback({
+      start: () => { haptic(); motion?.play('press'); options.onPress?.(); },
+      release: () => { motion?.play('release'); options.onRelease?.(); },
+      cancel: () => { motion?.play('settle'); options.onRelease?.(); }
+    }),
+    onActivate: handler
   });
   await UI.attach(win, parent, id);
   // Press frames also restore opacity and offset, so tapping a row during its
@@ -136,7 +141,8 @@ export async function row(win, parent, width, height, handler, options = {}) {
   const rest = { opacity: 1, position: { x: 0, y: 0 } };
   motion = await clips(win, id, {
     press: [{ time: 0.07, ...rest, scale: { x: 0.97, y: 0.97 }, ease: 'outQuad' }],
-    release: [{ time: 0.11, ...rest, scale: { x: 1.012, y: 1.012 }, ease: 'outCubic' }, { time: 0.26, ...rest, scale: { x: 1, y: 1 }, ease: 'inOutQuad' }]
+    release: [{ time: 0.11, ...rest, scale: { x: 1.012, y: 1.012 }, ease: 'outCubic' }, { time: 0.26, ...rest, scale: { x: 1, y: 1 }, ease: 'inOutQuad' }],
+    settle: [{ time: 0.14, ...rest, scale: { x: 1, y: 1 }, ease: 'outCubic' }]
   });
   return id;
 }
@@ -163,15 +169,18 @@ export async function toggle(win, parent, on, handler) {
     renderable: { type: 'box', colour: CLEAR, origin: { x: 0.5, y: 0.5 } },
     layout: { type: 'column', justifyContent: 'center', alignItems: 'center' },
     item: { size: { x: width + 16, y: TOUCH } }, contentAlign: 'fill', inheritAnimation: true,
-    onMouseDown: () => { haptic(); pop?.play('press'); },
-    onMouseUp: () => pop?.play('release'),
-    onMouseExit: () => pop?.play('release'),
-    onMouseClick: handler
+    onPress: pressFeedback({
+      start: () => { haptic(); pop?.play('press'); },
+      release: () => pop?.play('release'),
+      cancel: () => pop?.play('settle')
+    }),
+    onActivate: handler
   });
   await UI.attach(win, parent, target);
   pop = await clips(win, target, {
     press: [{ time: 0.06, scale: { x: 0.88, y: 0.88 }, ease: 'outQuad' }],
-    release: [{ time: 0.16, scale: { x: 1.08, y: 1.08 }, ease: 'outCubic' }, { time: 0.3, scale: { x: 1, y: 1 }, ease: 'inOutQuad' }]
+    release: [{ time: 0.16, scale: { x: 1.08, y: 1.08 }, ease: 'outCubic' }, { time: 0.3, scale: { x: 1, y: 1 }, ease: 'inOutQuad' }],
+    settle: [{ time: 0.14, scale: { x: 1, y: 1 }, ease: 'outCubic' }]
   });
   const track = await UI.createElement(win, {
     // The one fully round control: a switch reads as a switch by its shape.

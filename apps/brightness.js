@@ -7,7 +7,7 @@ import { haptic } from './haptics.js';
 import { CREAM, ORANGE, CARD, TRACK, RADIUS, TYPE } from './theme.js';
 
 export function createBrightness(allowed) {
-  let state = {}, value = { Available: false, Percent: -1 }, target, writing = false, reading = false, dragging = false;
+  let state = {}, value = { Available: false, Percent: -1 }, target, writing = false, reading = false, dragging;
   let binding, generation = 0, painted, queue = Promise.resolve();
   const paint = () => {
     const current = binding, token = generation;
@@ -62,12 +62,13 @@ export function createBrightness(allowed) {
       });
       await Bus.addMatch("type='signal',sender='org.koya.Shell1',interface='org.koya.Shell1',member='BrightnessChanged'");
     },
-    onState: next => { state = next; if (!allowed()) { dragging = false; target = undefined; } },
+    onState: next => { state = next; if (!allowed()) { dragging = undefined; target = undefined; } },
     refresh, setPercent,
     get value() { return value; },
     get busy() { return reading || writing; },
     attach: async (win, parent, width) => {
-      ++generation; binding = undefined; painted = undefined;
+      ++generation; binding = undefined; painted = undefined; dragging = undefined;
+      const token = generation;
       const card = await UI.createElement(win, {
         renderable: { type: 'box', colour: CARD, cornerRadius: RADIUS.surface, cornerResolution: 16 },
         layout: { type: 'row', gap: 12, padding: { l: 16, r: 8, t: 0, b: 0 }, alignItems: 'center' },
@@ -79,10 +80,15 @@ export function createBrightness(allowed) {
       const seek = point => setPercent((point.x - 14) / travel * 100);
       const slider = await UI.createElement(win, {
         renderable: { type: 'box', colour: [0, 0, 0, 0] }, item: { size: { x: sliderWidth, y: 72 } }, contentAlign: 'fill',
-        onMouseDown: (_, point) => { if (value.Available && allowed()) { dragging = true; haptic(); seek(point); } },
-        onMouseMove: (_, point) => { if (dragging) seek(point); },
-        onMouseUp: (_, point) => { if (dragging) seek(point); dragging = false; },
-        onMouseExit: () => { dragging = false; }
+        onPress: event => {
+          if (token !== generation) return;
+          if (event.phase === 'start' && dragging === undefined && value.Available && allowed()) {
+            dragging = event.interactionId; haptic(); seek(event.local);
+          } else if (event.interactionId === dragging) {
+            if (event.phase === 'change' || event.phase === 'end') seek(event.local);
+            if (event.phase === 'end' || event.phase === 'cancel') dragging = undefined;
+          }
+        }
       });
       await UI.attach(win, card, slider);
       await UI.setElementId(win, slider, 'brightness-slider');

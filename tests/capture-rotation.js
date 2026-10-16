@@ -60,7 +60,7 @@ export default async () => {
         const rule = initial.name + ',' + initial.width + 'x' + initial.height + '@' + initial.refreshRate + ',' + initial.x + 'x' + initial.y + ',' + initial.scale + ',transform,' + transform;
         await Process.exec('hyprctl keyword monitor ' + quote(rule));
         await pause(600); await app.settled();
-        const output = (await Compositor.listDisplays()).find(value => value.display === initial.name);
+        const output = (await Compositor.listDisplays({ backend: 'wayland' })).find(value => value.display === initial.name);
         const width = Number(output.logical_width), height = Number(output.logical_height);
         const info = await Compositor.getWindowInfo(win);
         const wallpaperInfo = await Compositor.getWindowInfo(probe);

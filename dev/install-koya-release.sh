@@ -33,13 +33,20 @@ configure_repository() {
 install_release() {
     local package
     local -a packages=()
-    [[ "$koya_version" == latest || ( "$koya_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$ && ${koya_version##*-r} -ge 892 ) ]] || {
-        fail 'Use latest or a Koya APK release with build 892 or newer'; return 1;
-    }
+    if [[ "$koya_version" != latest ]]; then
+        [[ "$koya_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$ ]] || {
+            fail 'Use latest or a Koya APK release at version 0.6.0 or newer'; return 1;
+        }
+        local version=${koya_version%-r*} major minor patch
+        IFS=. read -r major minor patch <<<"$version"
+        (( 10#$major > 0 || 10#$minor >= 6 )) || {
+            fail 'This shell requires Koya 0.6.0 or newer'; return 1;
+        }
+    fi
     configure_repository
     for package in koya helix-plugin-dbus helix-plugin-hypr helix-plugin-process helix-plugin-pam; do
         if [[ "$koya_version" == latest ]]; then
-            packages+=("$package@koya>=0.5.3-r892")
+            packages+=("$package@koya>=0.6.0-r0")
         else
             packages+=("$package@koya=$koya_version")
         fi

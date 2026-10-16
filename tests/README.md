@@ -3,7 +3,7 @@
 These tests run without a compositor or GPU. They use Koya, private DBus
 sessions and simulated phone services.
 
-Use the latest Koya release with its matching DBus, Hyprland and process
+Use Koya 0.6.0 or newer with its matching DBus, Hyprland, process and PAM
 plugins. Install the native build dependencies plus Bash, DBus, coreutils,
 util-linux, `socat`, GdkPixbuf with SVG/PNG loaders, and Python 3 with PyGObject.
 The development container includes these dependencies.
@@ -30,6 +30,13 @@ The suite covers session cleanup, buttons, display and idle behavior, keyboard,
 notifications, authentication, Wi-Fi, battery/network status, rotation, settings
 and updates. Hardware and system services use local fixtures; tests do not change
 your desktop session or install software.
+
+`node --experimental-vm-modules tests/test-input.mjs` checks virtual input
+lifecycles, cancellation, simultaneous contacts and slider coordinates without
+a compositor. It exercises the shell's control handlers with native UI calls
+replaced by fixtures, including the lock-screen and top-bar gestures. The
+`input-api` integration test imports every supervised application entry point
+and checks virtual input exports against the real Koya runtime.
 
 The `capture-*.js` scripts check rendered UI and require a Wayland compositor.
 `capture-rotation.js` checks window and layer geometry through all four transforms

@@ -187,8 +187,10 @@ source_dir=$TEST_INSTALL_ROOT
 arch=aarch64; download_base=https://example.invalid/downloads
 koya_version=latest
 case "$mode" in
-    pinned) koya_version=0.5.3-r892 ;;
-    outdated) koya_version=0.5.3-r891 ;;
+    pinned) koya_version=0.6.0-r0 ;;
+    newer) koya_version=0.6.1-r1 ;;
+    future) koya_version=1.0.0-r0 ;;
+    outdated) koya_version=0.5.99-r9999 ;;
     invalid) koya_version=not-a-version ;;
 esac
 printf 'hyprland~0.51\ncurl\ngnupg\n' >"$work/packages"
@@ -246,10 +248,10 @@ apk() {
 koya() { printf 'fixture Koya\n'; }
 install_packages
 REPOSITORY
-for mode in latest pinned configured wrong-key bad-signature outdated invalid update-failure unavailable; do
+for mode in latest pinned newer future configured wrong-key bad-signature outdated invalid update-failure unavailable; do
     output=$TEST_INSTALL_DIR/repository-$mode.output
     if sh "$TEST_INSTALL_DIR/repository-case.sh" "$mode" >"$output" 2>&1; then
-        case "$mode" in latest|pinned|configured) ;; *) cat "$output" >&2; exit 1 ;; esac
+        case "$mode" in latest|pinned|newer|future|configured) ;; *) cat "$output" >&2; exit 1 ;; esac
         case_work=$TEST_INSTALL_DIR/repository-$mode
         [ "$(cat "$TEST_INSTALL_DIR/fixtures/apk/keys/koya-apk.rsa.pub")" = 'offline key' ]
         [ "$(grep -c '^v3 @koya ' "$TEST_INSTALL_DIR/fixtures/apk/repositories")" = 1 ]
@@ -258,10 +260,11 @@ for mode in latest pinned configured wrong-key bad-signature outdated invalid up
         grep -q -- "--export $KOYA_KEY" "$case_work/gpg.calls"
         grep -q -- '--verify .*koya-apk.rsa.pub.sig .*koya-apk.rsa.pub' "$case_work/gpg.calls"
         [ "$(grep -cx update "$case_work/apk.calls")" = 2 ]
-        if [ "$mode" = pinned ]; then
-            packages='koya@koya=0.5.3-r892 helix-plugin-dbus@koya=0.5.3-r892 helix-plugin-hypr@koya=0.5.3-r892 helix-plugin-process@koya=0.5.3-r892 helix-plugin-pam@koya=0.5.3-r892'
+        if [ "$mode" = pinned ] || [ "$mode" = newer ] || [ "$mode" = future ]; then
+            case "$mode" in pinned) version=0.6.0-r0;; newer) version=0.6.1-r1;; future) version=1.0.0-r0;; esac
+            packages="koya@koya=$version helix-plugin-dbus@koya=$version helix-plugin-hypr@koya=$version helix-plugin-process@koya=$version helix-plugin-pam@koya=$version"
         else
-            packages='koya@koya>=0.5.3-r892 helix-plugin-dbus@koya>=0.5.3-r892 helix-plugin-hypr@koya>=0.5.3-r892 helix-plugin-process@koya>=0.5.3-r892 helix-plugin-pam@koya>=0.5.3-r892'
+            packages='koya@koya>=0.6.0-r0 helix-plugin-dbus@koya>=0.6.0-r0 helix-plugin-hypr@koya>=0.6.0-r0 helix-plugin-process@koya>=0.6.0-r0 helix-plugin-pam@koya>=0.6.0-r0'
         fi
         grep -Fxq "add --simulate --upgrade hyprland~0.51 curl gnupg $packages" "$case_work/apk.calls"
         grep -Fxq "add --upgrade hyprland~0.51 curl gnupg $packages" "$case_work/apk.calls"
@@ -270,7 +273,7 @@ for mode in latest pinned configured wrong-key bad-signature outdated invalid up
         case "$mode" in
             wrong-key) grep -q 'fingerprint does not match' "$output" ;;
             bad-signature) grep -q 'Bad signature: Koya Alpine repository key' "$output" ;;
-            outdated) grep -q 'build 892 or newer' "$output" ;;
+            outdated) grep -q '0.6.0 or newer' "$output" ;;
             invalid) grep -q 'APK version available' "$output" ;;
             update-failure|unavailable) ;;
             *) cat "$output" >&2; exit 1 ;;

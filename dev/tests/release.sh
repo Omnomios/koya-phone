@@ -10,8 +10,10 @@ if [[ ${1:-} == --case ]]; then
     mkdir -p "$work/apk/keys"
     printf 'https://example.invalid/alpine\n' >"$work/apk/repositories"
     case "$mode" in
-        pinned) koya_version=0.5.3-r892;;
-        outdated) koya_version=0.5.3-r891;;
+        pinned) koya_version=0.6.0-r0;;
+        newer) koya_version=0.6.1-r1;;
+        future) koya_version=1.0.0-r0;;
+        outdated) koya_version=0.5.99-r9999;;
         invalid) koya_version=not-a-version;;
         configured) printf 'v3 @koya %s\n' "$KOYA_REPOSITORY" >>"$work/apk/repositories";;
         http) fetch http://example.invalid/key "$work/key"; exit;;
@@ -42,10 +44,10 @@ if [[ ${1:-} == --case ]]; then
 fi
 work_root=$(mktemp -d /tmp/koya-release-test.XXXXXX)
 trap 'rm -rf "$work_root"' EXIT
-for mode in latest pinned configured wrong-key bad-signature apk-failure outdated invalid http; do
+for mode in latest pinned newer future configured wrong-key bad-signature apk-failure outdated invalid http; do
     mkdir "$work_root/$mode"
     if bash "$0" --case "$mode" "$work_root/$mode" >"$work_root/$mode/output" 2>&1; then
-        [[ "$mode" == latest || "$mode" == pinned || "$mode" == configured ]] || {
+        [[ "$mode" == latest || "$mode" == pinned || "$mode" == newer || "$mode" == future || "$mode" == configured ]] || {
             printf 'Unexpected success for %s\n' "$mode" >&2; exit 1;
         }
         [[ $(cat "$work_root/$mode/apk/keys/koya-apk.rsa.pub") == 'fixture key' ]]
@@ -56,16 +58,17 @@ for mode in latest pinned configured wrong-key bad-signature apk-failure outdate
         [[ $(grep -c -- ' --verify ' "$work_root/$mode/gpg.calls") == 1 ]]
         grep -q -- '--export 06089A97B6D66C69BFD021F0DF7B60698EF57FF3' "$work_root/$mode/gpg.calls"
         grep -q -- '--verify .*koya-apk.rsa.pub.sig .*koya-apk.rsa.pub' "$work_root/$mode/gpg.calls"
-        if [[ "$mode" == pinned ]]; then
-            grep -Fxq 'add --no-cache koya@koya=0.5.3-r892 helix-plugin-dbus@koya=0.5.3-r892 helix-plugin-hypr@koya=0.5.3-r892 helix-plugin-process@koya=0.5.3-r892 helix-plugin-pam@koya=0.5.3-r892' "$work_root/$mode/apk.calls"
+        if [[ "$mode" == pinned || "$mode" == newer || "$mode" == future ]]; then
+            case "$mode" in pinned) version=0.6.0-r0;; newer) version=0.6.1-r1;; future) version=1.0.0-r0;; esac
+            grep -Fxq "add --no-cache koya@koya=$version helix-plugin-dbus@koya=$version helix-plugin-hypr@koya=$version helix-plugin-process@koya=$version helix-plugin-pam@koya=$version" "$work_root/$mode/apk.calls"
         else
-            grep -Fxq 'add --no-cache koya@koya>=0.5.3-r892 helix-plugin-dbus@koya>=0.5.3-r892 helix-plugin-hypr@koya>=0.5.3-r892 helix-plugin-process@koya>=0.5.3-r892 helix-plugin-pam@koya>=0.5.3-r892' "$work_root/$mode/apk.calls"
+            grep -Fxq 'add --no-cache koya@koya>=0.6.0-r0 helix-plugin-dbus@koya>=0.6.0-r0 helix-plugin-hypr@koya>=0.6.0-r0 helix-plugin-process@koya>=0.6.0-r0 helix-plugin-pam@koya>=0.6.0-r0' "$work_root/$mode/apk.calls"
         fi
     else
         case "$mode" in
             wrong-key) grep -q 'fingerprint does not match' "$work_root/$mode/output";;
             bad-signature) grep -q 'Bad signature: Koya Alpine repository key' "$work_root/$mode/output";;
-            outdated|invalid) grep -q 'build 892 or newer' "$work_root/$mode/output";;
+            outdated|invalid) grep -q '0.6.0 or newer' "$work_root/$mode/output";;
             http) grep -q 'URLs must use HTTPS' "$work_root/$mode/output";;
             apk-failure) [[ -s "$work_root/$mode/apk.calls" ]]; continue;;
             *) cat "$work_root/$mode/output" >&2; exit 1;;

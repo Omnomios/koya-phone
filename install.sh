@@ -20,7 +20,7 @@ Usage: sh install.sh [options]
   --prefix DIRECTORY     Deployment; default ~/.local/share/koya-shell
   --profile PROFILE      auto (default), oneplus-enchilada, or generic
   --koya-version VERSION Package version available in the Koya Alpine repo;
-                         default latest
+                         Koya 0.6.0 or newer; default latest
   --no-apps              Skip Firefox, Alacritty and extra fonts
   --no-start             Install/select the session, leave tinydm stopped
   --help                Show this help
@@ -192,7 +192,10 @@ configure_koya_repository() {
     case "$download_base" in https://*) ;; *) die 'KOYA_DOWNLOAD_BASE must use HTTPS.' ;; esac
     if [ "$koya_version" != latest ]; then
         printf '%s\n' "$koya_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$' || die 'Use latest or an APK version available in the Koya repository.'
-        [ "${koya_version##*-r}" -ge 892 ] || die 'This shell requires Koya build 892 or newer.'
+        # Product version determines API compatibility; APK build numbers may reset.
+        version=${koya_version%-r*}
+        major=${version%%.*}; version=${version#*.}; minor=${version%%.*}
+        awk -v major="$major" -v minor="$minor" 'BEGIN { exit !(major+0 > 0 || minor+0 >= 6) }' || die 'This shell requires Koya 0.6.0 or newer.'
     fi
     manifest "$source_dir/install/packages/koya.list" >"$work/koya-package-names"
     [ "$(cat "$work/koya-package-names")" = "$(printf 'koya\nhelix-plugin-dbus\nhelix-plugin-hypr\nhelix-plugin-process\nhelix-plugin-pam')" ] || die 'Unexpected Koya package set.'
@@ -201,7 +204,7 @@ configure_koya_repository() {
         if [ "$koya_version" != latest ]; then
             printf '%s@koya=%s\n' "$package" "$koya_version"
         else
-            printf '%s@koya>=0.5.3-r892\n' "$package"
+            printf '%s@koya>=0.6.0-r0\n' "$package"
         fi
     done <"$work/koya-package-names" >"$work/koya-packages"
     verify_koya_key

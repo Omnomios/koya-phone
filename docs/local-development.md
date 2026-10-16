@@ -39,8 +39,9 @@ Pass session options after `--`:
 `--koya-version VERSION` requests a specific APK version, provided it is still
 available in the repository. Explicit Koya or Hyprland version options trigger
 an image build. Builds using `latest` disable image build caching to install the
-current release. Koya and its plugins use the same version,
-and must include the session-lock API.
+current release. Koya and its plugins use the same version, at least 0.6.0.
+Older releases do not provide the virtual input API used by the shell. APK
+build numbers alone do not indicate API compatibility.
 Use `--hyprland-version` for another 0.54.x version available in Alpine 3.24's
 repositories. The generated development configuration translates the phone's
 0.51 rules to 0.54 syntax. Aquamarine **0.12.0** in this image includes the
@@ -93,7 +94,8 @@ To check the buffer ordering, run `tests/capture-rotation.js` with
 viewport size changes on mapped windows arrive with a new buffer, including the
 wallpaper layer, rather than stretching the previous frame.
 
-Rebuild an older development image to install the current Koya release:
+Images built before the 0.6 input API must be rebuilt. The launcher rejects
+older Koya runtimes with a version error. Install the current release with:
 
 ```bash
 ./local-dev.sh --rebuild-image
@@ -114,7 +116,7 @@ runner can also run directly on the host.
   that supports nested Hyprland's Wayland backend.
 - Hyprland **0.54.x**, matching the generated development configuration, with
   Aquamarine **0.10.0 or newer** for its nested Wayland frame-callback fix.
-- A current Koya release with session-lock support and matching DBus, Hyprland, process and PAM plugins
+- Koya 0.6.0+ with matching DBus, Hyprland, process and PAM plugins
   and engine assets. The runtime must be compatible with
   your host's architecture and C library. The published Alpine APKs work in the
   container environment described above.

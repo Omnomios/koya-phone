@@ -26,7 +26,7 @@ if get_option('integration_tests')
     cpp_args: ['-DKOYA_TESTING'])
   hyprland_display_test = executable('koya-hyprland-display-test', 'native/hyprland-display.cpp',
     dependencies: dependency('gio-unix-2.0'), cpp_args: ['-DKOYA_TESTING'])
-  foreach name : ['session', 'hyprland', 'status', 'system-reconnect', 'keyboard', 'wifi', 'settings', 'rotation', 'askpass', 'notifications-service', 'credentials']
+  foreach name : ['session', 'hyprland', 'status', 'system-reconnect', 'keyboard', 'wifi', 'settings', 'rotation', 'askpass', 'notifications-service', 'credentials', 'input-api']
     test(name + '-integration', bash,
       args: [files('tests/run.sh'), name, meson.current_build_dir()],
       depends: [coordinator_test, hyprland_display_test, hyprland_display, askpass] + phone_modules + test_modules, timeout: 75)
@@ -36,4 +36,6 @@ endif
 node = find_program('node', required: false)
 if node.found()
   test('credential-model', node, args: files('tests/test-credential-model.mjs'))
+  test('update-version', node, args: files('tests/test-update-version.mjs'))
+  test('virtual-input', node, args: ['--experimental-vm-modules', files('tests/test-input.mjs')])
 endif

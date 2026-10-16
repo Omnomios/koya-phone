@@ -409,7 +409,7 @@ export function createDrawerController(display) {
     if (visible) mode = next.DesktopView;
     if (view?.closed) view = null;
     if (!view) {
-      const currentDisplay = (await Compositor.listDisplays()).find(value => value.display === display.display) || display;
+      const currentDisplay = (await Compositor.listDisplays({ backend: 'wayland' })).find(value => value.display === display.display) || display;
       view = await createView(currentDisplay, mode, apps, snapshot, refresh, trace);
       await view.prepare();
     }

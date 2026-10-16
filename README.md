@@ -3,7 +3,7 @@
 A touch interface for Linux phones running [postmarketOS](https://postmarketos.org),
 with an app launcher, desktops, notifications, Wi-Fi settings and an on-screen
 keyboard, plus Settings and Update Koya apps. Built with
-[Koya](https://www.koya-ui.com) and [Hyprland](https://hypr.land).
+[Koya](https://www.koya-ui.com) 0.6.0+ and [Hyprland](https://hypr.land).
 
 Koya Phone is experimental and designed for the OnePlus 6. It provides hardware
 volume controls, brightness adjustment, vibration feedback, automatic screen

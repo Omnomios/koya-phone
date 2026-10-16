@@ -281,6 +281,9 @@ if [[ "$parent" != /* ]]; then parent=${XDG_RUNTIME_DIR:?Missing desktop runtime
 for tool in dbus-run-session gdbus setsid timeout realpath; do command -v "$tool" >/dev/null || fail "Missing $tool"; done
 command -v -- "$koya" >/dev/null || fail 'Koya is not installed; use ./local-dev.sh for the release-based environment, or --koya FILE for an installed executable.'
 koya=$(resolve_executable "$koya")
+version=$("$koya" --version)
+[[ "$version" =~ ^Koya\ ([0-9]+)\.([0-9]+)\.([0-9]+) ]] || fail 'Cannot determine Koya version; select Koya 0.6.0 or newer with --koya FILE.'
+(( 10#${BASH_REMATCH[1]} > 0 || 10#${BASH_REMATCH[2]} >= 6 )) || fail 'Koya 0.6.0 or newer is required; refresh an older container with ./local-dev.sh --rebuild-image.'
 hyprland=$(resolve_executable "$hyprland")
 version=$("$hyprland" --version)
 [[ "$version" =~ 0\.54\.[0-9]+ ]] || fail 'Local development requires Hyprland 0.54.x; select it with --hyprland.'

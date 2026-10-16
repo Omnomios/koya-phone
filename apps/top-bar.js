@@ -17,7 +17,7 @@ const formatTime = () => {
   return String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
 };
 export default async (options = {}) => {
-  const displays = await Compositor.listDisplays();
+  const displays = await Compositor.listDisplays({ backend: 'wayland' });
   const win = await Compositor.createWindow({
     role: 'bar', edge: 'top', thickness: BAR_HEIGHT, reserveSpace: true,
     display: displays.length ? displays[0].display : '', namespace: 'koya-top-bar',
@@ -85,22 +85,20 @@ export default async (options = {}) => {
   await Promise.all([UI.setEnabled(win, charging, false), UI.setEnabled(win, wired, false), UI.setEnabled(win, warning, false), UI.setEnabled(win, technology, false)]);
   // One target covers the entire bar, including icons and side padding. Keep
   // it above the visual row so child targets cannot interrupt the gesture.
-  let drag;
+  const opened = new Set();
   const openPanel = () => notifications.open().catch(error => Log.error('Top bar gesture: ' + error));
-  const move = point => {
-    if (!drag) return;
-    const dx = Math.abs(point.x - drag.x), dy = point.y - drag.y;
-    // Recognise early in this short surface, including a final point outside
-    // its bounds. A swipe need not fit entirely inside the 40px bar.
-    if (dy >= 6 && dy > dx) { drag = undefined; openPanel(); }
-  };
   const target = await UI.createElement(win, {
     item: { size: { x: 'auto', y: BAR_HEIGHT } },
-    onMouseDown: point => { drag = { x: point.x, y: point.y }; },
-    onMouseMove: move,
-    onMouseUp: point => { move(point); drag = undefined; },
-    onMouseExit: point => { move(point); drag = undefined; },
-    onMouseClick: () => { drag = undefined; openPanel(); }
+    inputOptions: { dragAxis: 'y' },
+    onDrag: event => {
+      // Captured logical-window coordinates continue outside the short bar.
+      const { x, y } = event.displacement;
+      if (event.phase !== 'cancel' && !opened.has(event.interactionId) && y >= 6 && y > Math.abs(x)) {
+        opened.add(event.interactionId); openPanel();
+      }
+      if (event.phase === 'end' || event.phase === 'cancel') opened.delete(event.interactionId);
+    },
+    onActivate: openPanel
   });
   await UI.attach(win, surface, target);
   await UI.setElementId(win, target, 'top-bar-gesture');
@@ -149,7 +147,7 @@ export default async (options = {}) => {
       rotation.start().catch(error => Log.error('Orientation sensor: ' + error))
     ]), volume.onButton);
   windowLayout(win, async () => {
-    const display = (await Compositor.listDisplays()).find(value => value.display === displays[0].display);
+    const display = (await Compositor.listDisplays({ backend: 'wayland' })).find(value => value.display === displays[0].display);
     if (!display) return;
     const size = { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) };
     await notifications.resize(size);

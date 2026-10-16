@@ -96,7 +96,7 @@ export default async () => {
     if (!profile.Active || profile.ScreenState !== 'unlocked') { await call('AuthenticationCancel', 'u', id); return; }
     const mode = action.startsWith('org.koya.Askpass.') ? action.slice('org.koya.Askpass.'.length) : 'entry';
     active = { id, action, mode, noInput: mode === 'confirm' || mode === 'none', message: clean(message) || 'Administrator access is required', user: clean(user), question: '', status: '' };
-    const display = (await Compositor.listDisplays())[0];
+    const display = (await Compositor.listDisplays({ backend: 'wayland' }))[0];
     if (!display) { cancel(); return; }
     win = await Compositor.createWindow({ role: 'overlay', anchor: 'fill', display: display.display,
       size: { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) },
