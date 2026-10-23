@@ -7,7 +7,7 @@ export function lockController({ authenticate, unlock, onStatus = () => {}, now 
     },
     get busy() { return busy; },
     async submit(answer) {
-      if (busy || !state.Active || state.ScreenState !== 'locked' || !state.SecureLocked) return false;
+      if (busy || !state.Active || state.ScreenState !== 'locked' || !state.SecureLocked || state.AuthenticationRequired === false) return false;
       if (now() < retryAt) { onStatus('Try again in a moment'); return false; }
       busy = true; const token = ++attempt, generation = state.LockGeneration;
       onStatus('Checking…');

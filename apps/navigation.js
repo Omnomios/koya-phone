@@ -109,6 +109,6 @@ export default async () => {
     setActive('keyboard', open && keyboardVisible);
     if (value.DesktopViewMapped || value.DesktopView === 'closed' || !value.Active || value.ScreenState !== 'unlocked') stopWaiting();
     return drawers.onState(value);
-  }, drawers.onDesktop, drawers.onApplications);
+  }, drawers.onDesktop, drawers.onApplications, undefined, undefined, drawers.onLaunch);
   return { window: win, drawers };
 };

@@ -52,7 +52,44 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
   await UI.setAnimationTime(win, root, motion.ids.enter, 0);
   let board, mode = initialMode, page = 0, apps = initialApps, snapshot = await initialSnapshot, busy = false, message = '';
   let shown = false, entering = false, pendingPaint = false, closed = false, fetching = false;
-  let pendingLaunch;
+  let pendingLaunch, messageLabel;
+  const stopLaunch = async () => {
+    const pending = pendingLaunch;
+    pendingLaunch = null;
+    if (pending) { clearTimeout(pending.timer); await pending.feedback.end(); }
+  };
+  const launchFailed = async (pending, text, error) => {
+    if (closed || !shown || pendingLaunch !== pending) return;
+    message = text;
+    Log.error('Launch ' + pending.app.id + ': ' + error);
+    await stopLaunch();
+    await render();
+  };
+  const openedLaunch = async () => {
+    if (!pendingLaunch) return false;
+    const opened = snapshot.clients.find(client => pendingLaunch.pids.has(Number(client.pid)))
+      || snapshot.clients.find(client => !pendingLaunch.addresses.has(client.address) && client.workspace.id === pendingLaunch.workspace)
+      || appWindow(pendingLaunch.app, snapshot.clients);
+    if (!opened) return false;
+    pendingPaint = false;
+    await stopLaunch();
+    await leave(() => call('FocusWindow', 's', opened.address));
+    return true;
+  };
+  const onLaunch = async event => {
+    const pending = pendingLaunch;
+    if (!pending) return;
+    // The helper may exit before LaunchApplication returns its launch ID.
+    if (!pending.id) {
+      pending.events.push(event);
+      if (pending.events.length > 16) pending.events.shift();
+      return;
+    }
+    if (event.id !== pending.id) return;
+    if (event.state === 'started') { pending.pids.add(event.pid); await openedLaunch(); }
+    else if (event.state === 'failed' || event.state === 'exited' && event.status !== 0)
+      await launchFailed(pending, 'Unable to open ' + pending.app.name, event.message);
+  };
   let parked;
   const finishParking = async () => {
     if (!parked) return;
@@ -119,22 +156,31 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
     if (busy || closed || !shown || pendingLaunch) return;
     const existing = !fetching && appWindow(app, snapshot.clients);
     if (existing) { await leave(() => call('FocusWindow', 's', existing.address)); return; }
-    const pending = { app, addresses: new Set(snapshot.clients.map(client => client.address)), feedback };
+    const pending = { app, addresses: new Set(snapshot.clients.map(client => client.address)), feedback, events: [], pids: new Set() };
     pendingLaunch = pending;
+    // Accepting exec only confirms dispatch. A crashing app may never map a window.
+    pending.timer = setTimeout(() => {
+      launchFailed(pending, 'No window opened for ' + app.name, 'No window appeared within 15 seconds')
+        .catch(error => Log.error('Launch feedback: ' + error));
+    }, 15000);
     feedback.begin().catch(error => Log.error('Launch feedback: ' + error));
     try {
+      message = '';
+      if (messageLabel) await UI.setTextString(win, messageLabel, '');
       // Feedback is immediate, but workspace allocation must use the refreshed
       // state if the user taps an app before the outstanding query completes.
       if (fetching) await onRefresh();
       if (pendingLaunch !== pending || !shown) return;
       pending.workspace = nextDesktop(snapshot);
       pending.addresses = new Set(snapshot.clients.map(client => client.address));
-      await call('LaunchApplication', 'su', app.id, pending.workspace);
+      const id = await call('LaunchApplication', 'su', app.id, pending.workspace);
+      if (pendingLaunch !== pending) return;
+      pending.id = id;
+      for (const event of pending.events) await onLaunch(event);
+      pending.events.length = 0;
     }
     catch (error) {
-      if (closed || !shown || pendingLaunch !== pending) return;
-      pendingLaunch = null; await feedback.end();
-      message = 'Unable to open ' + app.name; Log.error('Launch: ' + error); await render();
+      await launchFailed(pending, 'Unable to open ' + app.name, error);
     }
   };
   let painting = false, paintDirty = false;
@@ -161,7 +207,7 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
       layout: { type: 'column', gap: SPACE.l }, item: { size: { x: width, y: boardHeight } }
     });
     await UI.attach(win, content, board);
-    if (message) await label(win, board, message, TYPE.caption + 2, width, 32, ORANGE);
+    messageLabel = message ? await label(win, board, message, TYPE.caption + 2, width, 32, ORANGE) : undefined;
     const columnGap = SPACE.m, rowGap = mode === 'apps' ? SPACE.l : SPACE.m;
     const columns = Math.max(1, Math.floor((width + columnGap) / (150 + columnGap)));
     const tileWidth = (width - columnGap * (columns - 1)) / columns;
@@ -261,7 +307,7 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
   });
 
   return {
-    win, dismiss,
+    win, dismiss, onLaunch,
     get shown() { return shown; },
     get closed() { return closed; },
     prepare: async () => { await park(true); trace('window prepared'); },
@@ -293,15 +339,8 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
       if (closed) return;
       snapshot = nextSnapshot;
       if (pendingLaunch) {
-        const opened = snapshot.clients.find(client => !pendingLaunch.addresses.has(client.address) && client.workspace.id === pendingLaunch.workspace)
-          || appWindow(pendingLaunch.app, snapshot.clients);
-        if (opened) {
-          const launch = pendingLaunch; pendingLaunch = null; pendingPaint = false;
-          await launch.feedback.end();
-          await leave(() => call('FocusWindow', 's', opened.address));
-          return;
-        }
-        if (nextMode !== mode) { await pendingLaunch.feedback.end(); pendingLaunch = null; }
+        if (await openedLaunch()) return;
+        if (nextMode !== mode) await stopLaunch();
       }
       // App tiles read the live snapshot in their handlers; desktop events
       // need not rebuild an otherwise unchanged application grid.
@@ -314,8 +353,7 @@ async function createView(display, initialMode, initialApps, initialSnapshot, on
     hide: async immediate => {
       if (!shown) return;
       shown = false; busy = true; entering = false;
-      if (pendingLaunch) await pendingLaunch.feedback.end();
-      pendingLaunch = null;
+      await stopLaunch();
       await UI.stopAnimation(win, indicator);
       await Promise.all([Compositor.setPointerEvents(win, false), Compositor.setKeyboardInteractivity(win, 'none')]);
       await park(immediate);
@@ -437,6 +475,7 @@ export function createDrawerController(display) {
   };
   return {
     onState, onDesktop: refresh, onApplications,
+    onLaunch: event => enqueue(async () => { if (view && !view.closed) await view.onLaunch(event); }),
     request: mode => {
       trace('tap requested ' + mode); stale = true;
       const opening = onState({ ...state, DesktopView: mode });

@@ -10,7 +10,7 @@ export function suspendPolicy(request, report) {
     onState(state) {
       const delay = Math.max(0, Math.min(86400, Number(state.IdleSuspendSeconds) || 0));
       if (delay !== seconds) { cancel(); seconds = delay; attempted = false; }
-      if (!state.Active || state.ScreenState !== 'off') {
+      if (!state.Active || state.ScreenState !== 'off' || state.CaffeineActive) {
         cancel(); attempted = false; return;
       }
       if (!seconds || !state.DisplayOff || state['lock-screenStatus'] !== 'ready' ||

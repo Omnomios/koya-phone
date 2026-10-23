@@ -62,10 +62,12 @@ export default async (options = {}) => {
   const spacer = await UI.createElement(win, { item: { flexGrow: 1 } });
   await UI.attach(win, root, spacer);
   const indicators = await UI.createElement(win, {
-    layout: { type: 'row', gap: 10, alignItems: 'center', justifyContent: 'end' }, item: { size: { x: 229, y: BAR_HEIGHT } }
+    layout: { type: 'row', gap: 10, alignItems: 'center', justifyContent: 'end' }, item: { size: { x: 261, y: BAR_HEIGHT } }
   });
   await UI.attach(win, root, indicators);
   const texture = name => '/rom/assets/status/' + name + '.png';
+  const caffeine = await icon(win, indicators, texture('caffeine'), 22, 22, BAR_HEIGHT);
+  await UI.setEnabled(win, caffeine, false);
   const wifi = await icon(win, indicators, texture('wifi-off'), 24, 24, BAR_HEIGHT);
   const wired = await icon(win, indicators, texture('ethernet'), 24, 24, BAR_HEIGHT);
   const warning = await text(win, indicators, '!', 18, 10, BAR_HEIGHT, ORANGE);
@@ -110,6 +112,7 @@ export default async (options = {}) => {
     updates = updates.then(async () => {
       const changed = (key, apply) => value[key] !== previous[key] ? apply() : Promise.resolve();
       await Promise.all([
+        changed('caffeine', () => UI.setEnabled(win, caffeine, value.caffeine)),
         changed('wifiIcon', () => UI.setTexture(win, wifi, texture(value.wifiIcon))),
         changed('cellIcon', () => UI.setTexture(win, cell, texture(value.cellIcon))),
         changed('batteryIcon', () => UI.setTexture(win, level, texture(value.batteryIcon))),

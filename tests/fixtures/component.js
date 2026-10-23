@@ -3,7 +3,12 @@ export default start(async () => {
   const name = Process.getEnv('KOYA_TEST_COMPONENT');
   const shell = (method, ...args) => Bus.call('org.koya.Shell1', '/org/koya/Shell1', 'org.koya.Shell1', method, ...args);
   const invoke = async method => {
-    if (method === 'BeginUnlock' || method === 'CancelUnlock') return shell(method, 'u', (await shell('GetState')).LockGeneration);
+    if (method === 'BeginUnlock' || method === 'BeginGraceUnlock' || method === 'CancelUnlock') return shell(method, 'u', (await shell('GetState')).LockGeneration);
+    if (method === 'GraceUnlock') {
+      const generation = (await shell('GetState')).LockGeneration;
+      await shell('BeginGraceUnlock', 'u', generation);return shell('Unlock', 'u', generation);
+    }
+    if (method === 'CompleteUnlock') return shell('Unlock', 'u', (await shell('GetState')).LockGeneration);
     if (method !== 'Unlock') return shell(method);
     const generation = (await shell('GetState')).LockGeneration;
     await shell('BeginUnlock', 'u', generation);return shell('Unlock', 'u', generation);
@@ -21,7 +26,7 @@ export default start(async () => {
     }
     const launch = call.member === 'Launch';
     if (!launch && call.member !== 'Action') return call.error('org.freedesktop.DBus.Error.UnknownMethod', call.member);
-    if (launch) await shell('LaunchApplication', 'su', ...call.args);
+    if (launch) return call.reply('s', await shell('LaunchApplication', 'su', ...call.args));
     else await invoke(call.args[0]);
     call.reply('');
   });

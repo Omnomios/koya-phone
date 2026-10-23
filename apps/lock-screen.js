@@ -26,18 +26,18 @@ export default async () => {
   const screens = new Map();
   let message = '';
   const status = value => { message = value; for (const screen of screens.values()) if (screen.status) UI.setTextString(screen.win, screen.status, value).catch(() => {}); };
-  const available = () => !!state.Active && state.ScreenState === 'locked' && state.SecureLocked && !ending;
+  const available = () => !!state.Active && state.ScreenState === 'locked' && state.SecureLocked && state.AuthenticationRequired !== false && !ending;
+  const releaseLock = async (generation, grace = false) => {
+    const current = await call('GetState');
+    if (!current.Active || current.ScreenState !== 'locked' || current.LockGeneration !== generation) throw new Error('Unlock cancelled');
+    await call(grace ? 'BeginGraceUnlock' : 'BeginUnlock', 'u', generation);
+    try { await Compositor.unlockSession(); }
+    catch (error) { await call('CancelUnlock', 'u', generation); throw error; }
+    ending = !!await call('Unlock', 'u', generation);
+  };
   const controller = lockController({
     authenticate: (password, user) => PAM.authenticate({ service: 'koya-lock', user, password }),
-    unlock: async generation => {
-      // Recheck coordinator policy after PAM, before releasing the Wayland lock.
-      const current = await call('GetState');
-      if (!current.Active || current.ScreenState !== 'locked' || current.LockGeneration !== generation) throw new Error('Unlock cancelled');
-      await call('BeginUnlock', 'u', generation);
-      try { await Compositor.unlockSession(); }
-      catch (error) { await call('CancelUnlock', 'u', generation); throw error; }
-      ending = !!await call('Unlock', 'u', generation);
-    },
+    unlock: generation => releaseLock(generation),
     onStatus: status
   });
   const submit = async screen => {
@@ -237,6 +237,11 @@ export default async () => {
         await confirmed(); await call('Ready', 's', 'lock-screen');
       }
       previous = state.LockGeneration;
+      if (state.Active && state.ScreenState === 'locked' && state.SecureLocked && state.AuthenticationRequired === false && state.PowerMenuState === 'closed' && !ending) {
+        try { await releaseLock(state.LockGeneration, true); }
+        catch (error) { Log.error('Grace unlock: ' + error); }
+        return;
+      }
       for (const screen of screens.values()) {
         if (screen.needsBuild) await build(screen);
         if (state.ScreenState !== 'locked' || !state.Active) screen.input?.clear();

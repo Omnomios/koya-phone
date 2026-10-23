@@ -1,6 +1,7 @@
-import { Bus, Process, root, runtime, build, fixture, coordinator, spawn, stop, call, state, waitState, wait, sleep, assert, equal, denied, key, action, login, dead, kill, run } from './check.js';
+import { Bus, Process, root, runtime, appRoot, build, fixture, coordinator, spawn, stop, call, state, waitState, wait, sleep, assert, equal, denied, key, action, login, dead, kill, run } from './check.js';
 const actions = () => Bus.call('org.freedesktop.login1', '/org/freedesktop/login1', 'org.koya.Test.Login', 'Actions');
 export default run(async () => {
+  Process.writeFileText(appRoot + '/session.conf', '[idle]\nlock-grace-seconds=0\n');
   let mock = fixture('login');
   await wait(async () => { await login(); return true; });
   let process = coordinator();

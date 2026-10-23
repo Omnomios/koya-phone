@@ -61,7 +61,7 @@ export default () => { setTimeout(async () => {
         case 'GetApplications': call.reply('aa{sv}', await desktop.applications()); return;
         case 'ResolveIcon': call.reply('s', await desktop.resolveIcon(args[0])); return;
         case 'GetDesktopState': call.reply('a{sv}', await desktop.state()); return;
-        case 'LaunchApplication': await desktop.launch(...args); break;
+        case 'LaunchApplication': call.reply('s', await desktop.launch(...args)); return;
         case 'SwitchDesktop': await desktop.switchDesktop(args[0]); break;
         case 'Dispatch': await desktop.dispatch(args[0]); break;
         case 'SetActive': Device.setActive(args[0]); break;

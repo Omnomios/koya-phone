@@ -7,6 +7,8 @@
 #include <vector>
 #include <cstring>
 #include <signal.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 static constexpr const char *NM = "org.freedesktop.NetworkManager";
 static constexpr const char *ROOT = "/org/freedesktop/NetworkManager";
@@ -142,6 +144,17 @@ class Services {
             g_variant_builder_add(&counts, "{sv}", "ActiveClaims", g_variant_new_uint32(self->sensor_clients.size()));
             result = g_variant_new("(a{sv})", &counts);
         } else if (name == "GetSessionByPID") result = g_variant_new("(o)", SESSION);
+        else if (name == "Inhibit") {
+            int pipes[2];
+            if(pipe2(pipes,O_CLOEXEC)<0) {
+                g_dbus_method_invocation_return_dbus_error(invocation,"org.koya.Dev.InhibitFailed","Cannot create mock inhibitor");return;
+            }
+            g_unix_fd_add(pipes[0],G_IO_HUP,[](gint fd,GIOCondition,gpointer)->gboolean { close(fd);return G_SOURCE_REMOVE; },nullptr);
+            auto *fds=g_unix_fd_list_new();int index=g_unix_fd_list_append(fds,pipes[1],nullptr);close(pipes[1]);
+            g_dbus_method_invocation_return_value_with_unix_fd_list(invocation,g_variant_new("(h)",index),fds);
+            g_object_unref(fds);return;
+        }
+        else if (name == "SetLockedHint") {}
         else if (name == "CanSuspend") result = g_variant_new("(s)", "na");
         else if (name == "CanPowerOff" || name == "CanReboot") result = g_variant_new("(s)", "yes");
         else if (name == "PowerOff" || name == "Reboot") g_print("Mock %s (host unchanged)\n", member);
@@ -216,6 +229,7 @@ public:
             "<method name=\"GetSessionByPID\"><arg type=\"u\" direction=\"in\"/><arg type=\"o\" direction=\"out\"/></method>"
             "<method name=\"CanPowerOff\"><arg type=\"s\" direction=\"out\"/></method><method name=\"CanReboot\"><arg type=\"s\" direction=\"out\"/></method>"
             "<method name=\"CanSuspend\"><arg type=\"s\" direction=\"out\"/></method>"
+            "<method name=\"Inhibit\"><arg type=\"s\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"h\" direction=\"out\"/></method>"
             "<method name=\"PowerOff\"><arg type=\"b\" direction=\"in\"/></method><method name=\"Reboot\"><arg type=\"b\" direction=\"in\"/></method></interface>");
         set(ROOT, NM, "WirelessEnabled", g_variant_new_boolean(TRUE));
         set(ROOT, NM, "WirelessHardwareEnabled", g_variant_new_boolean(TRUE));
@@ -251,7 +265,8 @@ public:
                 "<method name=\"AddAndActivateConnection\"><arg type=\"a{sa{sv}}\" direction=\"in\"/><arg type=\"o\" direction=\"in\"/><arg type=\"o\" direction=\"in\"/><arg type=\"o\" direction=\"out\"/><arg type=\"o\" direction=\"out\"/></method>";
             if (interface.first == WIRELESS) xml += "<method name=\"RequestScan\"><arg type=\"a{sv}\" direction=\"in\"/></method>";
             if (interface.first == DEV) xml += "<method name=\"Disconnect\"/>";
-            if (object.first == SESSION) xml += "<method name=\"SetBrightness\"><arg type=\"s\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"u\" direction=\"in\"/></method>";
+            if (object.first == SESSION) xml += "<method name=\"SetBrightness\"><arg type=\"s\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"u\" direction=\"in\"/></method>"
+                "<method name=\"SetLockedHint\"><arg type=\"b\" direction=\"in\"/></method>";
             if (object.first == SENSOR_PATH) xml += "<method name=\"ClaimAccelerometer\"/><method name=\"ReleaseAccelerometer\"/>";
             register_interface(object.first.c_str(), xml + "</interface>");
         }

@@ -9,6 +9,7 @@ export default run(async () => {
   await waitState(s => s.Active && s['top-barStatus'] === 'ready');
   equal((await state()).Wallpaper, 'earthy-green');
   equal((await state()).AutoRotateEnabled, true);
+  equal((await state()).LockGraceSeconds, 60);
   let changed = 0;
   Bus.onSignal(event => { if (event.interface === 'org.koya.Shell1' && event.member === 'StateChanged' && event.args[0].Wallpaper === 'tidal-blue') changed++; });
   await Bus.addMatch("type='signal',interface='org.koya.Shell1',member='StateChanged'");
@@ -17,13 +18,14 @@ export default run(async () => {
   await set('Wallpaper', 'tidal-blue');
   await wait(() => changed > 0, 'Wallpaper change was not broadcast');
   await set('IdleLockSeconds', 300);
+  await set('LockGraceSeconds', 30);
   await set('VolumeButtonsEnabled', false);
   await set('VolumeIndicatorSide', 'right');
   await set('VolumeStepPercent', 10);
   await set('BrightnessMinPercent', 10);
   await set('AutoRotateEnabled', false);
   for (const [key, value] of [['Wallpaper', '../etc/passwd'], ['Wallpaper', 'missing'], ['IdleLockSeconds', -1],
-    ['IdleLockSeconds', 86401], ['VolumeStepPercent', 26], ['VolumeStepPercent', '5.5'], ['BrightnessMinPercent', 0],
+    ['IdleLockSeconds', 86401], ['LockGraceSeconds', -1], ['LockGraceSeconds', 86401], ['VolumeStepPercent', 26], ['VolumeStepPercent', '5.5'], ['BrightnessMinPercent', 0],
     ['VolumeButtonsEnabled', 'yes'], ['AutoRotateEnabled', 'yes'], ['VolumeIndicatorSide', 'bottom'], ['Unknown', 1], ['VolumeMaxPercent', '999999999999999999999']]) {
     await denied(() => set(key, value));
   }
@@ -47,6 +49,7 @@ export default run(async () => {
   equal([restored.Wallpaper, restored.IdleLockSeconds, restored.VolumeButtonsEnabled, restored.VolumeIndicatorSide, restored.VolumeStepPercent, restored.BrightnessMinPercent],
     ['tidal-blue', 300, false, 'right', 10, 10]);
   equal(restored.AutoRotateEnabled, false, 'Auto-rotate preference was not restored');
+  equal(restored.LockGraceSeconds, 30, 'Authentication grace period was not restored');
   equal(await read(appRoot + '/session.conf'), '[idle]\nlock-seconds=120\nlock-screen-seconds=30\n[volume]\nstep-percent=5\n', 'Base policy was changed');
   for (const wallpaper of WALLPAPERS) {
     for (const size of [{ x: 432, y: 910 }, { x: 910, y: 432 }]) {

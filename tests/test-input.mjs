@@ -42,7 +42,7 @@ const event = (phase, interactionId = 'touch:one', local = { x: 100, y: 36 }) =>
 async function controls(component) {
   const nodes = new Map(), ids = new Map(), animations = new Map(), played = [];
   const writes = [], subscriptions = new Map(), shellCalls = [];
-  let next = 1, haptics = 0, allowed = true, opened = 0, panels = 0, windowRole;
+  let next = 1, haptics = 0, allowed = true, opened = 0, panels = 0, windowRole, shellState = {}, unlocks = 0;
   const context = createContext({
     setTimeout: (callback, delay) => { if (delay < 1000) queueMicrotask(callback); },
     setInterval() {}, clearTimeout() {}
@@ -84,7 +84,8 @@ async function controls(component) {
     },
     createWindow: async options => { windowRole = options.role; return 1; },
     getWindowInfo: async () => ({ role: windowRole, width: 540, height: 960 }),
-    setClearColor: noop, setWindowRenderingEnabled: noop, sessionLockState: async () => 'locked'
+    setClearColor: noop, setWindowRenderingEnabled: noop, sessionLockState: async () => 'locked',
+    unlockSession: async () => { unlocks++; }
   });
   stub(resolve(root, 'apps/haptics.js'), { haptic: () => { ++haptics; } });
   stub(resolve(root, 'apps/wallpaper-surface.js'), { wallpaperSurface: noop });
@@ -96,8 +97,11 @@ async function controls(component) {
   stub(resolve(root, 'apps/volume.js'), { createVolume: () => ({}) });
   stub(resolve(root, 'apps/rotation.js'), { createRotation: () => ({}) });
   stub(resolve(root, 'apps/rotation-transition.js'), { rotationTransition: () => noop });
-  stub(resolve(root, 'apps/session.js'), { connect: (component, onState) => subscriptions.set(component, onState), call: async (method, signature, value) => {
+  stub(resolve(root, 'apps/session.js'), { connect: (component, onState) => subscriptions.set(component, next => { shellState = next; return onState(next); }), call: async (method, signature, value) => {
     shellCalls.push(method);
+    if (method === 'GetState') return shellState;
+    if (method === 'BeginGraceUnlock') { assert.equal(shellState.AuthenticationRequired, false); return; }
+    if (method === 'Unlock') return true;
     if (method === 'SetBrightness') { writes.push(value); return { Available: true, Percent: value }; }
     if (method === 'GetBrightness') return { Available: true, Percent: 50 };
     throw new Error('Unexpected shell call: ' + method);
@@ -112,7 +116,7 @@ async function controls(component) {
   await entry.link((name, from) => load(name.startsWith('.') ? resolve(dirname(from.identifier), name) : name));
   await entry.evaluate();
   return { ...entry.namespace, nodes, ids, played, writes, subscriptions, shellCalls,
-    opened: () => opened, panels: () => panels,
+    opened: () => opened, panels: () => panels, unlocks: () => unlocks,
     haptics: () => haptics, allowed: () => allowed, deny: () => { allowed = false; } };
 }
 
@@ -216,4 +220,34 @@ async function controls(component) {
   assert.deepEqual(ui.shellCalls, [], 'A lock gesture bypassed authentication');
 }
 
-console.log('PASS: virtual controls, cancellation, multitouch, slider capture and lock/top-bar gestures');
+{
+  const ui = await controls('lock-screen'); await ui.build();
+  const state = { Active: true, ScreenState: 'off', SecureLocked: true, LockGeneration: 1, AuthenticationRequired: false, PowerMenuState: 'closed' };
+  await ui.subscriptions.get('lock-screen')(state);
+  assert.equal(ui.unlocks(), 0, 'Screen-off released the compositor lock');
+  await ui.subscriptions.get('lock-screen')({ ...state, ScreenState: 'locked' });
+  assert.equal(ui.unlocks(), 1, 'Wake during grace did not release the compositor lock');
+  assert.deepEqual(ui.shellCalls, ['GetState', 'BeginGraceUnlock', 'Unlock'], 'Grace wake did not use the coordinator-authorized unlock path');
+  assert.equal(ui.panels(), 0, 'Grace wake opened credential entry');
+}
+{
+  const ui = await controls('lock-screen'); await ui.build();
+  await ui.subscriptions.get('lock-screen')({ Active: true, ScreenState: 'locked', SecureLocked: true, LockGeneration: 1, AuthenticationRequired: true, PowerMenuState: 'closed' });
+  assert.equal(ui.unlocks(), 0, 'Authenticated lock was released without credentials');
+}
+{
+  const timers = new Map(); let serial = 0, requests = 0;
+  const context = createContext({ setTimeout: callback => { timers.set(++serial, callback); return serial; }, clearTimeout: id => timers.delete(id) });
+  const module = new SourceTextModule(await readFile(resolve(root, 'apps/suspend.js'), 'utf8'), { context });
+  await module.link(() => { throw new Error('Unexpected suspend policy dependency'); }); await module.evaluate();
+  const policy = module.namespace.suspendPolicy(async () => { requests++; }, error => { throw new Error(error); });
+  const off = { Active: true, ScreenState: 'off', DisplayOff: true, IdleSuspendSeconds: 1, 'lock-screenStatus': 'ready', PowerMenuState: 'closed' };
+  policy.onState(off); const stale = [...timers.values()][0];
+  policy.onState({ ...off, CaffeineActive: true });
+  assert.equal(timers.size, 0, 'Caffeine retained an automatic suspend timer');
+  await stale(); assert.equal(requests, 0, 'Cancelled timer suspended a caffeinated session');
+  policy.onState(off); assert.equal(timers.size, 1);
+  await [...timers.values()][0](); assert.equal(requests, 1);
+  policy.dispose();
+}
+console.log('PASS: virtual controls, cancellation, multitouch, slider capture, grace unlock and lock/top-bar gestures');

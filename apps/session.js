@@ -11,7 +11,7 @@ export const call = (method, signature = '', ...args) =>
 
 // Native D-Bus promises are dispatched by the running engine. Do not await
 // this connection from the bootstrap function: start it after bootstrap.
-export function connect(component, onState = () => {}, onDesktop = () => {}, onApplications = () => {}, onConnected = () => {}, onHardware = () => {}) {
+export function connect(component, onState = () => {}, onDesktop = () => {}, onApplications = () => {}, onConnected = () => {}, onHardware = () => {}, onLaunch = () => {}) {
   setTimeout(async () => {
     try {
       await Bus.connect();
@@ -29,6 +29,11 @@ export function connect(component, onState = () => {}, onDesktop = () => {}, onA
         } finally { refreshing = false; }
       };
       Bus.onSignal(event => {
+        if (event.interface === 'org.koya.Application1' && event.member === 'LaunchChanged' && event.path === '/org/koya/Application') {
+          const [id, state, pid, status, message] = event.args;
+          Promise.resolve(onLaunch({ id, state, pid: Number(pid), status: Number(status), message }))
+            .catch(error => Log.error('Launch state: ' + error));
+        }
         if (event.interface === NAME && event.member === 'HardwareButton') {
           try {
             Promise.resolve(onHardware(event.args[0])).catch(error => Log.error('Hardware button: ' + error));
@@ -63,6 +68,7 @@ export function connect(component, onState = () => {}, onDesktop = () => {}, onA
       await Bus.addMatch("type='signal',sender='org.koya.Shell1',interface='org.koya.Shell1',member='StateChanged'");
       if (component === 'top-bar') await Bus.addMatch("type='signal',sender='org.koya.Shell1',interface='org.koya.Shell1',member='HardwareButton'");
       if (component === 'navigation') await Bus.addMatch("type='signal',sender='org.koya.Shell1',interface='org.koya.Shell1',member='DesktopChanged'");
+      if (component === 'navigation') await Bus.addMatch("type='signal',path='/org/koya/Application',interface='org.koya.Application1',member='LaunchChanged'");
       if (component === 'navigation' || component === 'top-bar') await Bus.addMatch("type='signal',sender='org.koya.Shell1',interface='org.koya.Shell1',member='ApplicationsChanged'");
       await Bus.addMatch("type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0='org.koya.Shell1'");
       await onConnected();

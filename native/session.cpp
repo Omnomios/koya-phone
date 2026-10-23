@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
+#include <time.h>
 #include <cerrno>
 #include <cstring>
 #include <array>
@@ -31,7 +32,9 @@ static const char XML[] = R"XML(<node><interface name="org.koya.Shell1">
  <method name="ShowPowerMenu"/><method name="DismissPowerMenu"/>
  <method name="PowerOff"/><method name="Reboot"/>
  <method name="Suspend"/>
+ <method name="SetCaffeine"><arg type="b" direction="in"/><arg type="a{sv}" direction="out"/></method>
  <method name="Lock"/><method name="BeginUnlock"><arg type="u" direction="in"/></method>
+ <method name="BeginGraceUnlock"><arg type="u" direction="in"/></method>
  <method name="CancelUnlock"><arg type="u" direction="in"/></method>
  <method name="Unlock"><arg type="u" direction="in"/><arg type="b" direction="out"/></method>
  <method name="ConfigureAuthentication"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="in"/></method>
@@ -51,7 +54,7 @@ static const char XML[] = R"XML(<node><interface name="org.koya.Shell1">
  <method name="GetApplications"><arg type="aa{sv}" direction="out"/></method>
  <method name="ResolveIcon"><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
  <method name="GetDesktopState"><arg type="a{sv}" direction="out"/></method>
- <method name="LaunchApplication"><arg type="s" direction="in"/><arg type="u" direction="in"/></method>
+ <method name="LaunchApplication"><arg type="s" direction="in"/><arg type="u" direction="in"/><arg type="s" direction="out"/></method>
  <method name="SwitchDesktop"><arg type="u" direction="in"/></method>
  <method name="FocusWindow"><arg type="s" direction="in"/></method>
  <method name="CloseWindow"><arg type="s" direction="in"/></method>
@@ -107,10 +110,17 @@ class Session {
     Platform platform;
     CredentialSettings credentials;
     bool changing_credentials=false, secure_locked=false;
+    bool authentication_required=false, grace_unlocking=false;
+    gint64 grace_deadline=0;
+    guint grace_timer=0;
+    unsigned lock_grace_seconds=60;
     unsigned lock_generation=0;
     bool unlocking=false; std::string queued_lock; guint unlock_deadline=0;
     int sleep_delay=-1; bool sleep_delay_pending=false;
     unsigned sleep_delay_generation=0;
+    int caffeine_fd=-1;
+    bool caffeine_pending=false;
+    unsigned caffeine_generation=0;
     Desktop desktop;
     std::unique_ptr<Keyboard> keyboard;
     std::unique_ptr<AuthenticationProxy> authentication;
@@ -145,6 +155,8 @@ class Session {
         }
     }
     ~Session() {
+        release_caffeine();
+        remove_timer(grace_timer);
         release_sleep_delay();
         remove_timer(authentication_retry);
         authentication.reset();
@@ -189,6 +201,10 @@ class Session {
         s("UserName", g_get_user_name());
         credentials.append(b);
         g_variant_builder_add(&b,"{sv}","SecureLocked",g_variant_new_boolean(secure_locked));
+        g_variant_builder_add(&b,"{sv}","AuthenticationRequired",g_variant_new_boolean(authentication_required));
+        g_variant_builder_add(&b,"{sv}","LockGraceSeconds",g_variant_new_uint32(lock_grace_seconds));
+        g_variant_builder_add(&b,"{sv}","CaffeineActive",g_variant_new_boolean(caffeine_fd>=0));
+        g_variant_builder_add(&b,"{sv}","CaffeinePending",g_variant_new_boolean(caffeine_pending));
         g_variant_builder_add(&b,"{sv}","LockGeneration",g_variant_new_uint32(lock_generation));
         g_variant_builder_add(&b, "{sv}", "DisplayOff", g_variant_new_boolean(display_off));
         g_variant_builder_add(&b, "{sv}", "PreparingForSleep", g_variant_new_boolean(preparing_sleep));
@@ -275,7 +291,8 @@ class Session {
             const bool short_press = power_down && hold;
             cancel_hold();
             if (short_press && !pending) {
-                lock_screen(screen == "off" ? "locked" : "off");
+                if (screen == "off") { expire_grace(); lock_screen("locked"); }
+                else screen_off();
             }
             return;
         }
@@ -299,6 +316,8 @@ class Session {
         cancel_hold();
         platform.send("SetActive", g_variant_new("(b)", active));
         if (!active) {
+            release_caffeine();
+            if (screen != "unlocked") require_authentication();
             hide_keyboard();
             dismiss(true);
             dismiss_desktop();
@@ -555,6 +574,47 @@ class Session {
         }
     }
     void release_sleep_delay() { if(sleep_delay>=0) { close(sleep_delay);sleep_delay=-1; } }
+    void release_caffeine() {
+        ++caffeine_generation; caffeine_pending=false;
+        if(caffeine_fd>=0) { close(caffeine_fd); caffeine_fd=-1; }
+    }
+    void set_caffeine(GDBusMethodInvocation *invocation, bool enabled) {
+        if(!active || screen!="unlocked" || stopping || pending || preparing_sleep || !system) {
+            fail(invocation,"Caffeine requires an active unlocked session");return;
+        }
+        if(!enabled) {
+            release_caffeine();changed();
+            g_dbus_method_invocation_return_value(invocation,g_variant_new("(@a{sv})",state()));return;
+        }
+        if(caffeine_pending) { fail(invocation,"Caffeine is changing");return; }
+        if(caffeine_fd>=0) {
+            g_dbus_method_invocation_return_value(invocation,g_variant_new("(@a{sv})",state()));return;
+        }
+        caffeine_pending=true;changed();
+        struct Request { Session *session; GDBusMethodInvocation *invocation; unsigned generation; };
+        auto *request=new Request{this,G_DBUS_METHOD_INVOCATION(g_object_ref(invocation)),++caffeine_generation};
+        g_dbus_connection_call_with_unix_fd_list(system,LOGIN,LOGIN_PATH,MANAGER,"Inhibit",
+            g_variant_new("(ssss)","idle:sleep","Koya phone","Caffeine keeps the phone awake","block"),G_VARIANT_TYPE("(h)"),
+            G_DBUS_CALL_FLAGS_NONE,3000,nullptr,nullptr,[](GObject *object,GAsyncResult *result,gpointer data) {
+                std::unique_ptr<Request> request(static_cast<Request *>(data));auto *s=request->session;
+                GError *error=nullptr;GUnixFDList *fds=nullptr;
+                GVariant *reply=g_dbus_connection_call_with_unix_fd_list_finish(G_DBUS_CONNECTION(object),&fds,result,&error);
+                const bool current=request->generation==s->caffeine_generation && s->system==G_DBUS_CONNECTION(object);
+                if(current) s->caffeine_pending=false;
+                int fd=-1;
+                if(reply && fds) { gint32 index;g_variant_get(reply,"(h)",&index);fd=g_unix_fd_list_get(fds,index,&error); }
+                if(fd>=0 && current && s->active && s->screen=="unlocked" && !s->stopping && !s->pending && !s->preparing_sleep) {
+                    s->caffeine_fd=fd;s->changed();
+                    g_dbus_method_invocation_return_value(request->invocation,g_variant_new("(@a{sv})",s->state()));
+                } else {
+                    if(fd>=0) close(fd);
+                    fail(request->invocation,error?error->message:"Caffeine activation was cancelled");
+                    if(current) s->changed();
+                }
+                if(reply) g_variant_unref(reply);if(fds) g_object_unref(fds);g_clear_error(&error);
+                g_object_unref(request->invocation);
+            },request);
+    }
     void acquire_sleep_delay() {
         if(!system || sleep_delay>=0 || sleep_delay_pending || stopping) return;
         sleep_delay_pending=true;
@@ -639,6 +699,7 @@ class Session {
         const Setting settings[] = {
             {"AutoRotateEnabled", "screen", "auto-rotate", nullptr, &auto_rotate, 0, 0},
             {"IdleLockSeconds", "idle", "lock-seconds", &idle_lock_seconds, nullptr, 0, 86400},
+            {"LockGraceSeconds", "idle", "lock-grace-seconds", &lock_grace_seconds, nullptr, 0, 86400},
             {"IdleScreenSeconds", "idle", "lock-screen-seconds", &idle_screen_seconds, nullptr, 0, 86400},
             {"IdleSuspendSeconds", "idle", "suspend-seconds", &idle_suspend_seconds, nullptr, 0, 86400},
             {"HapticsEnabled", "haptics", "enabled", nullptr, &haptics_enabled, 0, 0},
@@ -720,6 +781,7 @@ class Session {
                 g_clear_error(&error);
             };
             read("lock-seconds", idle_lock_seconds);
+            read("lock-grace-seconds", lock_grace_seconds);
             read("lock-screen-seconds", idle_screen_seconds);
             if (g_key_file_has_key(config, "idle", "suspend-seconds", nullptr)) read("suspend-seconds", idle_suspend_seconds);
             auto setting = [&](const char *group, const char *key, unsigned &value, unsigned low, unsigned high) {
@@ -782,8 +844,8 @@ class Session {
 #endif
     }
     void idle_expired() {
-        if (!active || stopping || pending || screen == "off") return;
-        lock_screen("off");
+        if (!active || stopping || pending || screen == "off" || caffeine_fd>=0) return;
+        screen_off();
     }
     void idle_event(const char *packet) {
         if (packet[0] != 'T' || packet[1] != ' ') return;
@@ -866,7 +928,7 @@ class Session {
         return ok;
     }
     void update_idle(bool force = false) {
-        const unsigned seconds = !platform.ready || !active || stopping || pending || preparing_sleep || screen == "off" ? 0
+        const unsigned seconds = !platform.ready || !active || stopping || pending || preparing_sleep || caffeine_fd>=0 || screen == "off" ? 0
             : screen == "locked" ? idle_screen_seconds : idle_lock_seconds;
         if (!active && display_fd < 0) return;
         if (!force && seconds == configured_idle) return;
@@ -874,6 +936,34 @@ class Session {
         remove_timer(idle_dispatch);
         ++idle_generation;
         display_request("t " + std::to_string(seconds) + " " + std::to_string(idle_generation), 't');
+    }
+    static gint64 lock_clock() {
+        timespec now{};clock_gettime(CLOCK_BOOTTIME,&now);
+        return static_cast<gint64>(now.tv_sec)*G_USEC_PER_SEC+now.tv_nsec/1000;
+    }
+    void require_authentication() {
+        grace_deadline=0;remove_timer(grace_timer);
+        if(authentication_required) return;
+        authentication_required=true;
+        if(unlocking && grace_unlocking) { queued_lock=screen;display_power(false); }
+        if(secure_locked) locked_hint(true);
+        changed();
+    }
+    void expire_grace() {
+        if(grace_deadline && lock_clock()>=grace_deadline) require_authentication();
+    }
+    void screen_off() {
+        if(!active || stopping || pending) return;
+        if(screen=="unlocked") {
+            remove_timer(grace_timer);
+            authentication_required=lock_grace_seconds==0;
+            grace_deadline=authentication_required?0:lock_clock()+static_cast<gint64>(lock_grace_seconds)*G_USEC_PER_SEC;
+            if(!authentication_required) grace_timer=g_timeout_add(lock_grace_seconds*1000,[](gpointer data)->gboolean {
+                auto *session=static_cast<Session *>(data);session->grace_timer=0;
+                session->require_authentication();return G_SOURCE_REMOVE;
+            },this);
+        } else expire_grace();
+        lock_screen("off");
     }
     void lock_screen(const std::string &next) {
         if (!active || stopping || pending || (preparing_sleep && next != "off")) return;
@@ -892,6 +982,8 @@ class Session {
     void show() {
 #ifndef KOYA_TESTING
         if (screen != "unlocked" && active && !stopping && !pending && !preparing_sleep) {
+            expire_grace();
+            if(screen=="off") { screen="locked";if(secure_locked) display_power(true); }
             menu = "open"; changed(); return;
         }
 #endif
@@ -962,6 +1054,7 @@ class Session {
             return;
         }
         stopping = true;
+        release_caffeine();remove_timer(grace_timer);
         remove_timer(authentication_retry);
         if (authentication) authentication->stop();
         hide_keyboard();
@@ -1044,7 +1137,7 @@ class Session {
         delete a;
     }
     bool sleep_ready() const {
-        return system && active && !stopping && !pending && !preparing_sleep &&
+        return system && active && !stopping && !pending && !preparing_sleep && caffeine_fd<0 &&
             screen == "off" && display_off && secure_locked && components[3].status == "ready" && !components[3].expected;
     }
     struct SleepRequest {
@@ -1110,12 +1203,13 @@ class Session {
         cancel_hold();
         if (preparing) {
             // Cover suspend requested outside Koya too.
-            lock_screen("off");
+            screen_off();
             if(secure_locked) release_sleep_delay();
         } else if (was_preparing) {
             suspend_pending = false;
             ++resume_count;
             wake_key_until = g_get_monotonic_time() + 750000;
+            expire_grace();
             if (active && !stopping && !pending) lock_screen("locked");
             acquire_sleep_delay();
             caps();
@@ -1183,6 +1277,9 @@ class Session {
             s.set_setting(i, setting, value); return;
         }
         if (!strcmp(name, "Suspend")) { s.suspend(i); return; }
+        if (!strcmp(name,"SetCaffeine")) {
+            gboolean enabled;g_variant_get(args,"(b)",&enabled);s.set_caffeine(i,enabled);return;
+        }
         if (!strcmp(name, "GetBrightness")) {
             g_dbus_method_invocation_return_value(i, g_variant_new("(@a{sv})", s.brightness_state())); return;
         }
@@ -1297,7 +1394,11 @@ class Session {
                     !(std::string(id) == "koya-wifi.desktop" && s.caller_is(i, s.components[1]))) {
                     fail(i, "Application launch requires navigation or the owned Wi-Fi shortcut"); return;
                 }
-                ok = s.desktop.launch(id, workspace);
+                const auto launch = s.desktop.launch(id, workspace);
+                if (launch.empty()) { fail(i, "Hyprland rejected the application launch"); return; }
+                s.changed();
+                g_dbus_method_invocation_return_value(i, g_variant_new("(s)", launch.c_str()));
+                return;
             } else if (!strcmp(name, "SwitchDesktop")) {
                 guint32 workspace; g_variant_get(args, "(u)", &workspace);
                 if (workspace >= 1 && workspace <= 10000) ok = s.desktop.select_workspace(workspace);
@@ -1322,13 +1423,16 @@ class Session {
         }
         if (!strcmp(name, "Lock")) {
             if (!s.active || s.pending) { fail(i, "Session is inactive or busy"); return; }
+            s.require_authentication();
             s.lock_screen("locked");
-        } else if (!strcmp(name,"BeginUnlock")) {
+        } else if (!strcmp(name,"BeginUnlock") || !strcmp(name,"BeginGraceUnlock")) {
             guint32 generation;g_variant_get(args,"(u)",&generation);
+            const bool grace=!strcmp(name,"BeginGraceUnlock");s.expire_grace();
+            if(grace && s.authentication_required) { fail(i,"Authentication is required");return; }
             if(s.unlocking || generation!=s.lock_generation || !s.secure_locked || !s.active || s.screen!="locked" || s.pending || s.preparing_sleep || !s.caller_is(i,s.components[3])) {
                 fail(i,"Unlock authorization is no longer valid");return;
             }
-            s.unlocking=true;s.queued_lock.clear();
+            s.unlocking=true;s.grace_unlocking=grace;s.queued_lock.clear();
             s.unlock_deadline=g_timeout_add_seconds(3,[](gpointer data)->gboolean {
                 auto *session=static_cast<Session *>(data);session->unlock_deadline=0;
                 session->log_error("Unlock did not complete");session->stop();return G_SOURCE_REMOVE;
@@ -1336,14 +1440,15 @@ class Session {
         } else if (!strcmp(name,"CancelUnlock")) {
             guint32 generation;g_variant_get(args,"(u)",&generation);
             if(generation!=s.lock_generation || !s.caller_is(i,s.components[3])) { fail(i,"Invalid unlock cancellation");return; }
-            remove_timer(s.unlock_deadline);s.unlocking=false;
+            remove_timer(s.unlock_deadline);s.unlocking=false;s.grace_unlocking=false;
             const auto next=s.queued_lock;s.queued_lock.clear();if(!next.empty()) s.lock_screen(next);
         } else if (!strcmp(name, "Unlock")) {
             guint32 generation; g_variant_get(args,"(u)",&generation);
             if (!s.unlocking || generation != s.lock_generation || !s.caller_is(i, s.components[3])) {
                 fail(i, "Unlock requires the authorized lock screen"); return;
             }
-            remove_timer(s.unlock_deadline);s.unlocking=false;
+            if(s.grace_unlocking) s.expire_grace();
+            remove_timer(s.unlock_deadline);s.unlocking=false;s.grace_unlocking=false;
             const std::string relock=!s.queued_lock.empty()?s.queued_lock:!s.active || s.preparing_sleep?"locked":"";
             s.queued_lock.clear();s.secure_locked=false;
             if(!relock.empty()) {
@@ -1351,7 +1456,7 @@ class Session {
                 s.display_power(false);s.changed();
                 g_dbus_method_invocation_return_value(i,g_variant_new("(b)",FALSE));return;
             }
-            s.screen="unlocked";s.locked_hint(false);
+            s.screen="unlocked";s.authentication_required=false;s.grace_deadline=0;remove_timer(s.grace_timer);s.locked_hint(false);
             s.unlock_timer = g_timeout_add(250, [](gpointer p)->gboolean {
                 auto *session = static_cast<Session*>(p);session->unlock_timer = 0;
                 if(session->screen == "unlocked") session->terminate(session->components[3]);
@@ -1387,7 +1492,7 @@ class Session {
                         if (s.desktop.available) s.start(s.components[4]);
                     }
                     if (c.name == "platform" && s.screen != "unlocked") s.lock_screen(s.screen);
-                    if (c.name == "lock-screen") { s.secure_locked=true; s.locked_hint(true); if(s.screen=="locked") s.display_power(true); if(s.preparing_sleep) s.release_sleep_delay(); }
+                    if (c.name == "lock-screen") { s.secure_locked=true; s.locked_hint(s.authentication_required); if(s.screen=="locked") s.display_power(true); if(s.preparing_sleep) s.release_sleep_delay(); }
                     // Map navigation first so the OSK honours its bottom reservation.
                     if (c.name == "navigation" && !s.keyboard) s.init_keyboard();
                     if (c.name == "lock-screen" && s.screen == "off" && !s.display_power(false)) s.screen = "locked";
@@ -1428,6 +1533,7 @@ class Session {
             g_signal_connect(system, "closed", G_CALLBACK(+[](GDBusConnection*, gboolean, GError*, gpointer p) {
                 auto*s = static_cast<Session*>(p);
                 s->release_sleep_delay();
+                s->release_caffeine();
                 s->sleep_delay_pending = false;
                 ++s->sleep_delay_generation;
                 s->set_active(false);
@@ -1472,6 +1578,7 @@ class Session {
                 auto*s = static_cast<Session*>(p);
                 ++s->login_generation;
                 s->release_sleep_delay();
+                s->release_caffeine();
                 s->sleep_delay_pending = false;
                 ++s->sleep_delay_generation;
                 s->set_active(false);
@@ -1542,6 +1649,7 @@ class Session {
         credentials.load();
 #ifndef KOYA_TESTING
         screen = "locked";
+        authentication_required=true;
 #endif
         connect_system();
         for (int sig : {

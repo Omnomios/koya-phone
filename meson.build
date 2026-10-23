@@ -9,7 +9,7 @@ executable('koya-credential-update', 'native/credential-update.cpp', dependencie
 coordinator = executable('koya-session', 'native/session.cpp', dependencies: deps)
 executable('koya-update-service', 'native/update-service.cpp', dependencies: dependency('gio-unix-2.0'))
 askpass = executable('koya-askpass', 'native/askpass.cpp', dependencies: dependency('gio-unix-2.0'))
-executable('koya-launch-app', 'native/launch-app.cpp', dependencies: dependency('gio-unix-2.0'))
+launch_app = executable('koya-launch-app', 'native/launch-app.cpp', dependencies: dependency('gio-unix-2.0'))
 executable('koya-render-icon', 'native/render-icon.cpp', dependencies: dependency('gio-unix-2.0'))
 hyprland_display = executable('koya-hyprland-display', 'native/hyprland-display.cpp', dependencies: dependency('gio-unix-2.0'))
 if get_option('integration_tests')
@@ -17,6 +17,8 @@ if get_option('integration_tests')
   bash = find_program('bash')
   dbus_run = find_program('dbus-run-session')
   python = find_program('python3')
+  test('launch-app-integration', dbus_run,
+    args: ['--', python.full_path(), files('tests/test-launch-app.py'), launch_app], timeout: 30)
   updater_test = executable('koya-update-service-test', 'native/update-service.cpp',
     dependencies: dependency('gio-unix-2.0'), cpp_args: ['-DKOYA_UPDATE_TESTING'])
   test('update-service-integration', dbus_run,
@@ -26,7 +28,7 @@ if get_option('integration_tests')
     cpp_args: ['-DKOYA_TESTING'])
   hyprland_display_test = executable('koya-hyprland-display-test', 'native/hyprland-display.cpp',
     dependencies: dependency('gio-unix-2.0'), cpp_args: ['-DKOYA_TESTING'])
-  foreach name : ['session', 'hyprland', 'status', 'system-reconnect', 'keyboard', 'wifi', 'settings', 'rotation', 'askpass', 'notifications-service', 'credentials', 'input-api']
+  foreach name : ['session', 'sleep', 'hyprland', 'status', 'system-reconnect', 'keyboard', 'wifi', 'settings', 'rotation', 'askpass', 'notifications-service', 'credentials', 'input-api']
     test(name + '-integration', bash,
       args: [files('tests/run.sh'), name, meson.current_build_dir()],
       depends: [coordinator_test, hyprland_display_test, hyprland_display, askpass] + phone_modules + test_modules, timeout: 75)
@@ -38,4 +40,5 @@ if node.found()
   test('credential-model', node, args: files('tests/test-credential-model.mjs'))
   test('update-version', node, args: files('tests/test-update-version.mjs'))
   test('virtual-input', node, args: ['--experimental-vm-modules', files('tests/test-input.mjs')])
+  test('desktop-launch', node, args: ['--experimental-vm-modules', files('tests/test-desktop-launch.mjs')])
 endif

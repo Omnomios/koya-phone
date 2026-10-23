@@ -36,9 +36,10 @@ export function createDesktop(root, changed, applicationsChanged, homeSelected) 
       if (workspace === 1) homeSelected();
     }, launch: async (id, workspace) => {
       if (!Number.isInteger(workspace) || workspace < 2 || workspace > 10000) throw new Error('Invalid application workspace');
-      const command = await Desktop.launchCommand(id);
+      const launch = await Desktop.launchCommand(id);
       await send('dispatch workspace ' + workspace);
-      await send('dispatch ' + command);
+      await send('dispatch ' + launch.command);
+      return launch.id;
     }
   };
 }

@@ -68,7 +68,12 @@ struct Desktop {
     bool operation(const char *method, GVariant *args) { GVariant *reply = platform->request(method, args); if (!reply) return false; g_variant_unref(reply); return true; }
     bool dispatch(const std::string &command) { return operation("Dispatch", g_variant_new("(s)", command.c_str())); }
     bool select_workspace(unsigned workspace) { return operation("SwitchDesktop", g_variant_new("(u)", workspace)); }
-    bool launch(const char *id, unsigned workspace) { return operation("LaunchApplication", g_variant_new("(su)", id, workspace)); }
+    std::string launch(const char *id, unsigned workspace) {
+        GVariant *reply = platform->request("LaunchApplication", g_variant_new("(su)", id, workspace), G_VARIANT_TYPE("(s)"));
+        if (!reply) return {};
+        const char *id_value; g_variant_get(reply, "(&s)", &id_value);
+        std::string result(id_value); g_variant_unref(reply); return result;
+    }
     static bool address(const char *value) {
         size_t size = strlen(value); return size > 2 && size <= 18 && value[0] == '0' && value[1] == 'x' &&
             std::all_of(value + 2, value + size, [](char c) { return g_ascii_isxdigit(c); });

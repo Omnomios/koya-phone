@@ -12,6 +12,7 @@ export function topBarStatus(state) {
     batteryText: batteryKnown ? Math.round(percent) + '%' : '—',
     batteryLow: batteryKnown && percent <= 15 && !state.ExternalPower && state.BatteryState !== 'charging',
     charging: !!state.ExternalPower || state.BatteryState === 'charging',
+    caffeine: !!state.CaffeineActive,
     wifiIcon: wifiConnected ? 'wifi-' + bars(wifiStrength, 3) : state.WifiState === 'connecting' ? 'wifi-0' : 'wifi-off',
     cellIcon: cellConnected ? 'cell-' + bars(cellStrength, 4) : 'cell-off',
     cellText: cellConnected ? state.CellularTechnology || '' : '',

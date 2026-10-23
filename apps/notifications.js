@@ -10,7 +10,7 @@ import { startNotifications, emitNotification } from './notifications-service.js
 import { notificationSurface } from './notification-surface.js';
 import { createBrightness } from './brightness.js';
 import { haptic } from './haptics.js';
-import { button, icon, text, label, row, pill, backdrop, sheetHeader } from './touch-ui.js';
+import { button, icon, text, label, row, pill, toggle, backdrop, sheetHeader } from './touch-ui.js';
 import { clips } from './motion.js';
 import { pressFeedback } from './press-feedback.js';
 import { call } from './session.js';
@@ -29,7 +29,7 @@ export function createNotifications(display, onUnread = () => {}) {
   const size = { x: Number(display.logical_width || display.width), y: Number(display.logical_height || display.height) };
   let width = size.x - 2 * GUTTER;
   let state = {}, center, toast, centerBoard, toastBoard, apps = [], connected = false;
-  let requested = false, page = 0, banner, bannerTimer, bannerKey, centerKey, pendingBanner;
+  let requested = false, page = 0, banner, bannerTimer, bannerKey, centerKey, pendingBanner, caffeineError = '', caffeineBusy = false;
   const icons = new Map(); let iconVersion = 0;
   const mountIcons = () => Assets.mount(Process.getEnv('XDG_CACHE_HOME', Process.getEnv('HOME', '') + '/.cache') + '/koya/icons', '/rom');
   const resolveIcon = async item => {
@@ -49,6 +49,13 @@ export function createNotifications(display, onUnread = () => {}) {
   const unlocked = () => state.Active && state.ScreenState === 'unlocked' && state.PowerMenuState === 'closed';
   const brightness = createBrightness(() => requested && unlocked());
   const bannersAllowed = () => unlocked() && state.DesktopView === 'closed' && !requested;
+  const setCaffeine = async enabled => {
+    if (!unlocked() || caffeineBusy || state.CaffeinePending) return;
+    caffeineBusy = true; caffeineError = '';
+    try { await call('SetCaffeine', 'b', enabled); }
+    catch (error) { caffeineError = 'Unable to change Caffeine'; Log.error('Caffeine: ' + error); }
+    finally { caffeineBusy = false; enqueue(reconcile); }
+  };
   const emit = (sender, member, id, action, reason) => {
     try { emitNotification(Bus, sender, member, id, action, reason); }
     catch (error) { Log.error('Notification signal: ' + error); }
@@ -147,7 +154,7 @@ export function createNotifications(display, onUnread = () => {}) {
   };
   // The shade covers both bars. Keep the top bar's strip clear for the notch.
   const TOP = BAR_HEIGHT + SPACE.s;
-  const listHeight = () => size.y - TOP - GUTTER - HEADER_HEIGHT - 2 * TILE - 4 * SPACE.m - TOUCH;
+  const listHeight = () => size.y - TOP - GUTTER - HEADER_HEIGHT - (size.x > size.y ? 2 : 3) * TILE - (size.x > size.y ? 4 : 5) * SPACE.m - TOUCH;
   const buildCenter = async () => {
     center = await notificationSurface(display, 'koya-notifications', size, { x: 0, y: 0 }, alpha(INK, 0.98), 'exclusive');
     await UI.setElementId(center.win, center.root, 'notifications-root');
@@ -156,7 +163,7 @@ export function createNotifications(display, onUnread = () => {}) {
   };
   const paintCenter = async () => {
     const groups = pages(); page = Math.min(page, groups.length - 1);
-    const key = JSON.stringify([page, model.items, iconVersion, apps.map(app => app.icon), state.WifiSsid, state.WifiState]);
+    const key = JSON.stringify([page, model.items, iconVersion, apps.map(app => app.icon), state.WifiSsid, state.WifiState, state.CaffeineActive, state.CaffeinePending, caffeineError]);
     if (centerKey === key) return;
     centerKey = key;
     await center.paint(async () => {
@@ -171,15 +178,29 @@ export function createNotifications(display, onUnread = () => {}) {
       ]);
       await brightness.attach(win, centerBoard, width);
       // Quick settings share one row anatomy: icon column, title and status.
+      const wide = size.x > size.y, quickWidth = wide ? (width - SPACE.m) / 2 : width;
+      let quickParent = centerBoard;
+      if (wide) {
+        quickParent = await UI.createElement(win, { layout: { type: 'row', gap: SPACE.m }, item: { size: { x: width, y: TILE } } });
+        await UI.attach(win, centerBoard, quickParent);
+      }
       const connected = state.WifiState === 'connected' && state.WifiSsid;
-      const wifi = await row(win, centerBoard, width, TILE, openWifi, { right: TRAILING_INSET - 20 });
+      const wifi = await row(win, quickParent, quickWidth, TILE, openWifi, { right: TRAILING_INSET - 20 });
       await UI.setElementId(win, wifi, 'notifications-wifi');
       await icon(win, wifi, '/rom/assets/status/' + (connected ? 'wifi-3' : 'wifi-off') + '.png', 26, 36, TILE);
-      const detail = await UI.createElement(win, { layout: { type: 'column', justifyContent: 'center' }, item: { size: { x: width - 16 - 36 - 12 * 2 - 40 - (TRAILING_INSET - 20), y: TILE } } });
+      const detail = await UI.createElement(win, { layout: { type: 'column', justifyContent: 'center' }, item: { size: { x: quickWidth - 16 - 36 - 12 * 2 - 40 - (TRAILING_INSET - 20), y: TILE } } });
       await UI.attach(win, wifi, detail);
-      await label(win, detail, 'Wi-Fi', TYPE.body, width - 120, 26);
-      await label(win, detail, connected ? preview(state.WifiSsid, 32) : state.WifiState === 'connecting' ? 'Connecting…' : 'Not connected', TYPE.caption, width - 120, 22, connected ? ORANGE : MUTED);
+      await label(win, detail, 'Wi-Fi', TYPE.body, quickWidth - 120, 26);
+      await label(win, detail, connected ? preview(state.WifiSsid, 32) : state.WifiState === 'connecting' ? 'Connecting…' : 'Not connected', TYPE.caption, quickWidth - 120, 22, connected ? ORANGE : MUTED);
       await icon(win, wifi, shellIcon('next'), 18, 40, TILE);
+      const caffeine = await row(win, quickParent, quickWidth, TILE, () => setCaffeine(!state.CaffeineActive), { right: TRAILING_INSET - 20 });
+      await UI.setElementId(win, caffeine, 'notifications-caffeine');
+      await icon(win, caffeine, '/rom/assets/status/caffeine.png', 26, 36, TILE);
+      const caffeineDetail = await UI.createElement(win, { layout: { type: 'column', justifyContent: 'center' }, item: { size: { x: quickWidth - 16 - 36 - 12 * 2 - 68 - (TRAILING_INSET - 20), y: TILE } } });
+      await UI.attach(win, caffeine, caffeineDetail);
+      await label(win, caffeineDetail, 'Caffeine', TYPE.body, quickWidth - 160, 26);
+      await label(win, caffeineDetail, caffeineError || (state.CaffeinePending ? 'Enabling…' : state.CaffeineActive ? 'Keeping awake' : 'Off'), TYPE.caption, quickWidth - 160, 22, state.CaffeineActive || caffeineError ? ORANGE : MUTED);
+      await toggle(win, caffeine, !!state.CaffeineActive, () => setCaffeine(!state.CaffeineActive));
       const list = await UI.createElement(win, { layout: { type: 'column', gap: SPACE.m }, item: { size: { x: width, y: listHeight() } } });
       await UI.attach(win, centerBoard, list);
       if (!items.length) {

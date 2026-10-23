@@ -22,6 +22,7 @@ const categories = {
     settings: [
       { key: 'AutoRotateEnabled', title: 'Auto-rotate', boolean: true },
       { key: 'IdleLockSeconds', title: 'Screen off after', hint: 'While using the phone', choices: [0, 30, 60, 120, 300, 600], format: seconds },
+      { key: 'LockGraceSeconds', title: 'Require unlock after', hint: 'After the screen turns off', choices: [0, 5, 15, 30, 60, 120, 300, 600], format: value => value === 0 ? 'Immediately' : seconds(value) },
       { key: 'IdleScreenSeconds', title: 'Lock screen timeout', hint: 'While the lock screen is visible', choices: [0, 15, 30, 60, 120], format: seconds },
       { key: 'IdleSuspendSeconds', title: 'Suspend after', hint: 'After the display switches off', choices: [0, 60, 180, 300, 600, 1800], format: seconds },
       { key: 'BrightnessMinPercent', title: 'Minimum brightness', choices: [1, 5, 10, 15, 20, 30], format: percent }

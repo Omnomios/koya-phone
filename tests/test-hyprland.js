@@ -64,6 +64,18 @@ export default run(async () => {
     equal(png.slice(0, 8), [137, 80, 78, 71, 13, 10, 26, 10]);
     equal(png.slice(16, 24), [0, 0, 0, 160, 0, 0, 0, 160], 'Icon size');
   }
+  const platformPid = (await state()).platformPid;
+  assert(platformPid > 0, 'Platform worker is not running');
+  const addedIcon = runtime + '/new-app.svg';
+  Process.writeFileText(addedIcon, '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect width="160" height="160" fill="#123456"/><text x="20" y="100" font-size="48" fill="white">App</text></svg>');
+  Process.writeFileText(runtime + '/applications/koya-added.desktop', '[Desktop Entry]\nType=Application\nName=New app\nExec=/bin/true\nIcon=' + addedIcon + '\n');
+  let added;
+  await wait(async () => {
+    added = (await call('GetApplications')).find(app => app.id === 'koya-added.desktop');
+    return added && added.icon.startsWith('/rom/koya-app-icon-');
+  }, 'New application SVG was not rendered');
+  assert(Process.exists(runtime + '/koya/icons/' + added.icon.slice('/rom/'.length)), 'New application icon was not cached');
+  equal((await state()).platformPid, platformPid, 'Installing an application restarted the platform worker');
   equal(JSON.parse((await call('GetDesktopState')).activeworkspace).id, 1);
   const largeClient = { address: '0xabc', title: 'Window title '.repeat(7000) };
   Process.writeFileText(runtime + '/clients', JSON.stringify([largeClient]));
@@ -77,8 +89,11 @@ export default run(async () => {
   const launch = id => Bus.call('org.koya.Test.navigation', '/org/koya/Test/Component', 'org.koya.Test.Component', 'Launch', 'su', id, 2);
   await denied(() => launch('missing.desktop'));
   for (const [method, sig, args] of [['LaunchApplication', 'su', ['koya-test.desktop', 2]], ['SwitchDesktop', 'u', [0]], ['FocusWindow', 's', ['0x12;quit']], ['CloseWindow', 's', ['class:.*']]]) await denied(() => call(method, sig, ...args));
-  await launch('koya-test.desktop'); equal(Number(await read(runtime + '/workspace')), 2);
+  const launchId = await launch('koya-test.desktop');
+  assert(typeof launchId === 'string' && /^[0-9a-f-]{36}$/.test(launchId), 'Launch did not return its tracking ID');
+  equal(Number(await read(runtime + '/workspace')), 2);
   assert((await read(runtime + '/commands')).includes(quote(appRoot + '/build/koya-launch-app') + ' ' + quote(runtime + '/applications/koya-test.desktop')), 'Launch command did not use the desktop entry');
+  assert((await read(runtime + '/commands')).includes(' ' + launchId), 'Tracking ID was not passed to the launcher');
   equal((await state()).DesktopView, 'desktops', 'Launch prematurely dismissed feedback');
   await call('FocusWindow', 's', '0xabc'); const hidden = await waitState(s => s.DesktopView === 'closed');
   equal(hidden['navigationPid'], drawer['navigationPid']); equal(hidden['navigationStatus'], 'ready');
@@ -105,6 +120,7 @@ export default run(async () => {
   assert(await on()); assert(!Process.exists(path) && !Process.exists(metadata));
 });
 async function applicationFixtures() {
+  Process.writeFileText(appRoot + '/session.conf', '[idle]\nlock-grace-seconds=0\n');
   Process.mkdir(runtime + '/applications');
   for (const [name, extra] of [['koya-test', 'Icon=koya-test-icon\n'], ['koya-hidden', 'NoDisplay=true\n']]) {
     Process.writeFileText(runtime + '/applications/' + name + '.desktop', '[Desktop Entry]\nType=Application\nName=' + name + '\nExec=/bin/true\n' + extra);

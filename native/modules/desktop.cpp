@@ -3,7 +3,7 @@
 #include <gio/gdesktopappinfo.h>
 #include <memory>
 #include <atomic>
-#include <thread>
+#include <pthread.h>
 #include <condition_variable>
 #include <deque>
 
@@ -23,7 +23,8 @@ struct DesktopModule: NativeModule {
     std::condition_variable wake;
     std::deque<Job> jobs;
     std::deque<Result> results;
-    std::thread worker;
+    pthread_t worker{};
+    bool worker_started = false;
     bool ending = false;
     std::atomic<bool> invalidated{false};
     using NativeModule::NativeModule;
@@ -41,7 +42,8 @@ struct DesktopModule: NativeModule {
         if (monitor) { g_signal_handler_disconnect(monitor, handler); g_object_unref(monitor); monitor = nullptr; }
         remove(notification);
         { std::lock_guard<std::mutex> lock(mutex); ending = true; jobs.clear(); }
-        wake.notify_all(); if (worker.joinable()) worker.join();
+        wake.notify_all();
+        if (worker_started) { pthread_join(worker, nullptr); worker_started = false; }
         for (auto &entry : promises) {
             JSValue error = JS_NewString(js, "Desktop module stopped");
             JSValue result = JS_Call(js, entry.second.reject, JS_UNDEFINED, 1, &error);
@@ -122,8 +124,10 @@ struct DesktopModule: NativeModule {
                 else {
                     gchar *helper = g_shell_quote((root + "/build/koya-launch-app").c_str());
                     gchar *filename = g_shell_quote(g_desktop_app_info_get_filename(app->second));
-                    std::string command = std::string("exec ") + helper + " " + filename;
-                    result.json = quote(command.c_str()); g_free(helper); g_free(filename);
+                    gchar *token = g_uuid_string_random();
+                    std::string command = std::string("exec ") + helper + " " + filename + " " + token;
+                    result.json = "{\"command\":" + quote(command.c_str()) + ",\"id\":" + quote(token) + "}";
+                    g_free(helper); g_free(filename); g_free(token);
                 }
             }
             { std::lock_guard<std::mutex> lock(mutex); if (!ending) results.push_back(std::move(result)); }
@@ -133,7 +137,22 @@ struct DesktopModule: NativeModule {
         auto *self = static_cast<DesktopModule *>(base);
         if (argc != 2 || !JS_IsString(argv[0]) || !JS_IsFunction(base->js, argv[1])) return JS_ThrowTypeError(base->js, "start expects (root, onApplicationsChanged)");
         self->shutdown(); self->root = string(base->js, argv[0]); self->icons = std::make_unique<Icons>(self->root); self->subscribe(argv[1]);
-        self->ending = false; self->invalidated = false; self->worker = std::thread([self] { self->run(); });
+        self->ending = false; self->invalidated = false;
+        // SVG loaders can overflow musl's small default pthread stack on ARM.
+        pthread_attr_t attributes;
+        int error = pthread_attr_init(&attributes);
+        if (!error) {
+            error = pthread_attr_setstacksize(&attributes, 4 * 1024 * 1024);
+            if (!error) error = pthread_create(&self->worker, &attributes, [](void *data)->void * {
+                static_cast<DesktopModule *>(data)->run(); return nullptr;
+            }, self);
+            pthread_attr_destroy(&attributes);
+        }
+        if (error) {
+            self->shutdown();
+            return JS_ThrowInternalError(base->js, "Cannot start desktop worker: %s", g_strerror(error));
+        }
+        self->worker_started = true;
         self->monitor = g_app_info_monitor_get();
         self->handler = g_signal_connect(self->monitor, "changed", G_CALLBACK(+[](GAppInfoMonitor *, gpointer data) {
             auto *self = static_cast<DesktopModule *>(data); self->invalidated = true;
